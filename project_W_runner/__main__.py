@@ -1,9 +1,16 @@
+import aiohttp
 import click
 
+from project_W_runner.config import loadConfig
+from project_W_runner.runner import Runner
+import asyncio
 
 @click.command()
-def main():
-    click.echo("This is project_W_runner's command line interface.")
+@click.option("--customConfigPath", type=str, required=False)
+def main(customconfigpath: str = None):
+    config = loadConfig([customconfigpath]) if customconfigpath else loadConfig()
+    runner = Runner(backend_url=config["backendURL"], token=config["runnerToken"])
+    asyncio.run(runner.run())
 
 
 if __name__ == "__main__":

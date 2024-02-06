@@ -27,7 +27,11 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
 ]
 dependencies = [
+    "aiohttp",
     "click",
+    "jsonschema",
+    "platformdirs",
+    "pyaml_env",
 ]
 
 [project.optional-dependencies]
