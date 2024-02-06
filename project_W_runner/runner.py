@@ -119,14 +119,17 @@ class Runner:
         with self.cond_var:
             # Before fetching the actual job data, make sure that the field
             # is not None, so that we don't process the same job twice.
+            self.current_job_data = JobData(
+                audio=None,
+                model=None,
+                language=None
+            )
             res, code = await self.post("/api/runners/retrieveJob")
             if code != 200:
                 raise ShutdownSignal(f"Failed to retrieve job: {res['error']}")
-            self.current_job_data = JobData(
-                audio=base64.b64decode(res["audio"]),
-                model=res.get("model"),
-                language=res.get("language")
-            )
+            self.current_job_data.audio = base64.b64decode(res["audio"])
+            self.current_job_data.model = res.get("model")
+            self.current_job_data.language = res.get("language")
             self.new_job = True
             logger.info("Job downloaded, processing...")
             self.cond_var.notify()
