@@ -52,6 +52,9 @@ schema = {
             "type": "string",
             "pattern": r"^[a-zA-Z0-9_-]+$",
         },
+        "torchDevice": {
+            "type": "string"
+        },
         "disableOptionValidation": {
             "type": "boolean",
             "default": False

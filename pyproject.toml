@@ -30,6 +30,8 @@ dependencies = [
     "aiohttp",
     "click",
     "jsonschema",
+    "openai-whisper",
+    "numpy",
     "platformdirs",
     "pyaml_env",
 ]

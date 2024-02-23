@@ -1,11 +1,11 @@
 import asyncio
 import base64
 from dataclasses import dataclass
-from hmac import new
-from os import error
 from threading import Condition, Thread
 import time
 from typing import Optional
+
+from project_W_runner.utils import prepare_audio, transcribe
 from .logger import get_logger
 import aiohttp
 
@@ -27,9 +27,10 @@ class JobData:
     audio: bytes
     model: Optional[str]
     language: Optional[str]
-    progress: Optional[float] = None
     transcript: Optional[str] = None
     error: Optional[str] = None
+    progress: Optional[float] = None
+    current_step: Optional[str] = None
 
 
 class ShutdownSignal(Exception):
@@ -47,6 +48,7 @@ class ShutdownSignal(Exception):
 class Runner:
     backend_url: str
     token: str
+    torch_device: Optional[str]
     current_job_data: Optional[JobData]
     session: aiohttp.ClientSession
     # We use this condition variable to signal to the processing thread
@@ -54,9 +56,10 @@ class Runner:
     cond_var: Condition
     new_job: bool = False
 
-    def __init__(self, backend_url: str, token: str):
+    def __init__(self, backend_url: str, token: str, torch_device: Optional[str]):
         self.backend_url = backend_url
         self.token = token
+        self.torch_device = torch_device
         self.current_job_data = None
         self.cond_var = Condition()
         Thread(target=self.run_processing_thread, daemon=True).start()
@@ -77,12 +80,15 @@ class Runner:
         """
         Processes the current job, using the Whisper python package.
         """
-        self.current_job_data.progress = 0.0
-        for _ in range(10):
-            time.sleep(2)
-            self.current_job_data.progress += 0.1
-        self.current_job_data.transcript = "Lorem ipsum"
-        logger.info("Job processed, going back to idle")
+
+        # For some silly reason python doesn't let you do assignments in a lambda.
+        def progress_callback(progress: float):
+            print(f"Progress: {progress * 100:.2}%")
+            self.current_job_data.progress = progress
+
+        audio = prepare_audio(self.current_job_data.audio)
+        result = transcribe(audio, self.current_job_data.model, self.current_job_data.language, progress_callback, self.torch_device)
+        self.current_job_data.transcript = result["text"]
 
     async def post(self, route: str, data: dict = None, params: dict = None, append_auth_header: bool = True):
         """
