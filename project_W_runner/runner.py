@@ -83,7 +83,7 @@ class Runner:
 
         # For some silly reason python doesn't let you do assignments in a lambda.
         def progress_callback(progress: float):
-            print(f"Progress: {progress * 100:.2}%")
+            logger.info(f"Progress: {round(progress * 100, 2)}%")
             self.current_job_data.progress = progress
 
         audio = prepare_audio(self.current_job_data.audio)
