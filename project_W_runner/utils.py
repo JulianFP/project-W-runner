@@ -33,7 +33,14 @@ def prepare_audio(audio: bytes) -> np.array:
     return np.frombuffer(out, np.int16).flatten().astype(np.float32) / 32768.0
 
 
-def transcribe(audio: np.array, model: Optional[str], language: Optional[str], progress_callback: Callable[[float], None], device: Optional[str]) -> dict[str, str]:
+def transcribe(
+        audio: np.array,
+        model: Optional[str],
+        language: Optional[str],
+        progress_callback: Callable[[float], None],
+        device: Optional[str],
+        model_cache_dir: Optional[str]
+) -> dict[str, str]:
     """
     Transcribe the given audio using the given model and language. Returns the dictionary of all the
     information returned by the Whisper invocation. The progress_callback is called periodically with
@@ -73,7 +80,7 @@ def transcribe(audio: np.array, model: Optional[str], language: Optional[str], p
         return _monkeypatching_tqdm
 
     # TODO: Load the model for the correct language.
-    model = load_model(model or "base", device=device)
+    model = load_model(model or "base", device=device, download_root=model_cache_dir)
     tqdm.tqdm = monkeypatching_tqdm(progress_callback)
 
     progress_callback(0.0)

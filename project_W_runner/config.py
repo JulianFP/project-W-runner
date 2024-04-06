@@ -55,6 +55,9 @@ schema = {
         "torchDevice": {
             "type": "string"
         },
+        "modelCacheDir": {
+            "type": "string",
+        },
         "disableOptionValidation": {
             "type": "boolean",
             "default": False
