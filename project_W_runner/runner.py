@@ -1,8 +1,6 @@
 import asyncio
 import base64
 from dataclasses import dataclass
-from threading import Condition, Thread
-import time
 from typing import Optional
 
 from project_W_runner.utils import prepare_audio, transcribe
@@ -135,7 +133,7 @@ class Runner:
         except Exception as e:
             logger.error(f"Error processing job: {e}")
             self.current_job_data.error = str(e)
-        
+
         # Submit the result to the server.
         data = {}
         if self.current_job_data.transcript is not None:
@@ -191,7 +189,7 @@ class Runner:
                     # Start the job processing in the background. The task is stored
                     # in a field, because the event loop only keeps a weak reference
                     # to it, so it may get garbage collected if we don't store it.
-                    self.job_task = asyncio.create_task(self.dispatch_job())                
+                    self.job_task = asyncio.create_task(self.dispatch_job())
 
     async def run(self):
         async with aiohttp.ClientSession() as session:
