@@ -93,7 +93,10 @@ class Runner:
         """
         headers = {"Authorization": f"Bearer {self.token}"} if append_auth_header else {}
         async with self.session.post(self.backend_url + route, data=data, params=params, headers=headers) as response:
-            return await response.json(), response.status
+            if response.content_type == "application/json":
+                return await response.json(), response.status
+            logger.warning(f"Non-JSON backend response of type {response.content_type}")
+            return None, response.status
 
     async def register(self):
         """
@@ -161,6 +164,11 @@ class Runner:
             if self.current_job_data and self.current_job_data.progress is not None:
                 data["progress"] = self.current_job_data.progress
             res, status = await self.post("/api/runners/heartbeat", data=data)
+            if res is None:
+                # The heartbeat didn't return JSON for some reason. We don't want the runner
+                # to crash yet, so just continue the loop and try again in the next iteration.
+                logger.warning(f"Heartbeat failed!")
+                continue
             # If the server unregisterd the runner, we don't want to send more heartbeats,
             # so we exit the loop and let the run() method handle the re-registration.
             # TODO: Replace this with a proper error code check.
