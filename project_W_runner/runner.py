@@ -59,6 +59,7 @@ class Runner:
         self.torch_device = torch_device
         self.model_cache_dir = model_cache_dir
         self.current_job_data = None
+        self.job_task = None
 
     def process_current_job(self, job_data: JobData) -> str:
         """
@@ -200,4 +201,6 @@ class Runner:
                 # If the server requested a shutdown, we don't want to re-register.
                 logger.fatal(f"Shutting down: {s.reason}")
             finally:
+                if self.job_task is not None:
+                    self.job_task.cancel()
                 await self.post("/api/runners/unregister")
