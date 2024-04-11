@@ -41,11 +41,6 @@ tests = [
     "pytest",
     "pytest-cov",
 ]
-docs = [
-    "sphinx",
-    "sphinx_mdinclude",
-    "sphinx_rtd_theme",
-]
 
 # Command line scripts installed as part of the installation
 [project.scripts]
