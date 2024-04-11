@@ -1,0 +1,45 @@
+{
+  lib,
+  ffmpeg,
+  python3Packages
+}:
+
+python3Packages.buildPythonPackage rec {
+  pname = "project_W_runner";
+  version = "0.0.1";
+  format = "setuptools";
+
+  src = ../../.;
+
+  nativeBuildInputs = with python3Packages; [
+    setuptools-scm
+  ];
+  buildInputs = [
+    ffmpeg
+  ];
+  propagatedBuildInputs = with python3Packages; [
+    aiohttp
+    click
+    jsonschema
+    openai-whisper
+    numpy
+    platformdirs
+    pyaml-env
+  ];
+
+  nativeCheckInputs = with python3Packages; [
+    pytestCheckHook
+    pytest-cov
+  ];
+  pythonImportsCheck = [ pname ];
+
+  #hardcode version so that setuptools-scm works without .git folder:
+  SETUPTOOLS_SCM_PRETEND_VERSION = version; 
+
+  meta = {
+    description = "Runner for Project-W";
+    homepage = "https://github.com/JulianFP/project-W-runner";
+    license = lib.licenses.mit;
+    mainProgram = pname;
+  };
+}
