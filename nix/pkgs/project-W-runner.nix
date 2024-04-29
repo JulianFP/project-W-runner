@@ -39,7 +39,7 @@ python3Packages.buildPythonPackage rec {
   meta = {
     description = "Runner for Project-W";
     homepage = "https://github.com/JulianFP/project-W-runner";
-    license = lib.licenses.mit;
+    license = lib.licenses.agpl3Only;
     mainProgram = pname;
   };
 }
