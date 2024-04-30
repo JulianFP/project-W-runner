@@ -3,7 +3,7 @@ FROM python:3.12-slim-bookworm
 
 LABEL org.opencontainers.image.source=https://github.com/JulianFP/project-W-runner
 LABEL org.opencontainers.image.description="project-W runner production image"
-LABEL org.opencontainers.image.licenses=MIT
+LABEL org.opencontainers.image.licenses=AGPL-3.0-only
 
 WORKDIR /app
 
