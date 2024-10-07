@@ -1,7 +1,7 @@
 {
   lib,
   ffmpeg,
-  python3Packages
+  python3Packages,
 }:
 
 python3Packages.buildPythonPackage rec {
@@ -34,7 +34,7 @@ python3Packages.buildPythonPackage rec {
   pythonImportsCheck = [ pname ];
 
   #hardcode version so that setuptools-scm works without .git folder:
-  SETUPTOOLS_SCM_PRETEND_VERSION = version; 
+  SETUPTOOLS_SCM_PRETEND_VERSION = version;
 
   meta = {
     description = "Runner for Project-W";
