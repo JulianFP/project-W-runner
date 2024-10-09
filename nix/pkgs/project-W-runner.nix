@@ -14,10 +14,9 @@ python3Packages.buildPythonPackage rec {
   nativeBuildInputs = with python3Packages; [
     setuptools-scm
   ];
-  buildInputs = [
-    ffmpeg
-  ];
+
   propagatedBuildInputs = with python3Packages; [
+    ffmpeg
     aiohttp
     click
     jsonschema
