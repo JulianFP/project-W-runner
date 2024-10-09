@@ -1,7 +1,7 @@
 {
   lib,
   ffmpeg,
-  python3Packages
+  python3Packages,
 }:
 
 python3Packages.buildPythonPackage rec {
@@ -14,10 +14,9 @@ python3Packages.buildPythonPackage rec {
   nativeBuildInputs = with python3Packages; [
     setuptools-scm
   ];
-  buildInputs = [
-    ffmpeg
-  ];
+
   propagatedBuildInputs = with python3Packages; [
+    ffmpeg
     aiohttp
     click
     jsonschema
@@ -34,7 +33,7 @@ python3Packages.buildPythonPackage rec {
   pythonImportsCheck = [ pname ];
 
   #hardcode version so that setuptools-scm works without .git folder:
-  SETUPTOOLS_SCM_PRETEND_VERSION = version; 
+  SETUPTOOLS_SCM_PRETEND_VERSION = version;
 
   meta = {
     description = "Runner for Project-W";

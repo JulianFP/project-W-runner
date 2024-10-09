@@ -4,4 +4,3 @@
 
 # Don't copy any pycaches into the image.
 **/__pycache__/
-

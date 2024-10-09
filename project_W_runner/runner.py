@@ -3,9 +3,11 @@ import base64
 from dataclasses import dataclass
 from typing import Optional
 
-from project_W_runner.utils import prepare_audio, transcribe
-from .logger import get_logger
 import aiohttp
+
+from project_W_runner.utils import prepare_audio, transcribe
+
+from .logger import get_logger
 
 logger = get_logger("project-W-runner")
 
@@ -22,6 +24,7 @@ class JobData:
     This only contains data relevant for the runner,
     so no metadata like filename, job id or job owner.
     """
+
     audio: bytes
     model: Optional[str]
     language: Optional[str]
@@ -37,6 +40,7 @@ class ShutdownSignal(Exception):
     This could be either because a graceful shutdown was requested
     or because of an error, e.g. if a server request times out.
     """
+
     reason: str
 
     def __init__(self, reason: str):
@@ -51,7 +55,13 @@ class Runner:
     current_job_data: Optional[JobData]
     session: aiohttp.ClientSession
 
-    def __init__(self, backend_url: str, token: str, torch_device: Optional[str], model_cache_dir: Optional[str] = None):
+    def __init__(
+        self,
+        backend_url: str,
+        token: str,
+        torch_device: Optional[str],
+        model_cache_dir: Optional[str] = None,
+    ):
         self.backend_url = backend_url
         self.token = token
         self.torch_device = torch_device
@@ -76,12 +86,14 @@ class Runner:
             job_data.language,
             progress_callback,
             self.torch_device,
-            self.model_cache_dir
+            self.model_cache_dir,
         )
 
         return result["text"]
 
-    async def post(self, route: str, data: dict = None, params: dict = None, append_auth_header: bool = True):
+    async def post(
+        self, route: str, data: dict = None, params: dict = None, append_auth_header: bool = True
+    ):
         """
         Send a POST request to the server.
 
@@ -90,7 +102,9 @@ class Runner:
         If `append_auth_header` is True (which it is by default), the runner's token is appended to the request headers.
         """
         headers = {"Authorization": f"Bearer {self.token}"} if append_auth_header else {}
-        async with self.session.post(self.backend_url + route, data=data, params=params, headers=headers) as response:
+        async with self.session.post(
+            self.backend_url + route, data=data, params=params, headers=headers
+        ) as response:
             if response.content_type == "application/json":
                 return await response.json(), response.status
             logger.warning(f"Non-JSON backend response of type {response.content_type}")
@@ -119,7 +133,7 @@ class Runner:
         self.current_job_data = JobData(
             audio=base64.b64decode(res["audio"]),
             model=res.get("model"),
-            language=res.get("language")
+            language=res.get("language"),
         )
         try:
             # Note: In order for the background thread to not block the heartbeat loop, it
@@ -181,11 +195,7 @@ class Runner:
                     logger.info("Job assigned")
                     # Before fetching the actual job data, make sure that the field
                     # is not None, so that we don't process the same job twice.
-                    self.current_job_data = JobData(
-                        audio=None,
-                        model=None,
-                        language=None
-                    )
+                    self.current_job_data = JobData(audio=None, model=None, language=None)
                     # Start the job processing in the background. The task is stored
                     # in a field, because the event loop only keeps a weak reference
                     # to it, so it may get garbage collected if we don't store it.

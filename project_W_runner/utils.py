@@ -1,6 +1,6 @@
-
 from subprocess import CalledProcessError, run
 from typing import Callable, Optional
+
 import numpy as np
 import tqdm
 from whisper import load_model
@@ -15,31 +15,38 @@ def prepare_audio(audio: bytes) -> np.array:
     """
     args = [
         "ffmpeg",
-        "-i", "pipe:",
-        "-f", "s16le",
-        "-ac", "1",
-        "-acodec", "pcm_s16le",
-        "-ar", "16000",
+        "-i",
+        "pipe:",
+        "-f",
+        "s16le",
+        "-ac",
+        "1",
+        "-acodec",
+        "pcm_s16le",
+        "-ar",
+        "16000",
         "-stats",
-        "pipe:"
+        "pipe:",
     ]
     try:
         out = run(args, input=audio, capture_output=True, check=True).stdout
     except CalledProcessError as e:
         raise RuntimeError(f"Failed to transform audio: {e.stderr.decode()}") from e
     except FileNotFoundError as e:
-        raise RuntimeError(f"File not found: {e.filename}\n\nIs ffmpeg installed and in the PATH?") from e
+        raise RuntimeError(
+            f"File not found: {e.filename}\n\nIs ffmpeg installed and in the PATH?"
+        ) from e
 
     return np.frombuffer(out, np.int16).flatten().astype(np.float32) / 32768.0
 
 
 def transcribe(
-        audio: np.array,
-        model: Optional[str],
-        language: Optional[str],
-        progress_callback: Callable[[float], None],
-        device: Optional[str],
-        model_cache_dir: Optional[str]
+    audio: np.array,
+    model: Optional[str],
+    language: Optional[str],
+    progress_callback: Callable[[float], None],
+    device: Optional[str],
+    model_cache_dir: Optional[str],
 ) -> dict[str, str]:
     """
     Transcribe the given audio using the given model and language. Returns the dictionary of all the
@@ -47,6 +54,7 @@ def transcribe(
     the progress of the transcription, as a float between 0 and 1. If device is not None, it will be
     used as the device for the model.
     """
+
     # Heavy inspiration from <https://github.com/ssciwr/vink/blob/main/vink.py>
     def monkeypatching_tqdm(progress_cb):
         def _monkeypatching_tqdm(
@@ -72,6 +80,7 @@ def transcribe(
                         value = value / unit_divisor
                     self.progress += value
                     progress_cb(self.progress / total)
+
             if unit_divisor:
                 total = total / unit_divisor
 
