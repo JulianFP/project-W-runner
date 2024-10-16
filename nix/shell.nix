@@ -57,6 +57,7 @@ pkgs.mkShell {
           git update-index --skip-worktree "$localOverwriteFile"
           rm "$localOverwriteFile"
       fi
+      git update-index --skip-worktree "config.yml"
     ''
     + pre-commit-check.shellHook;
 }
