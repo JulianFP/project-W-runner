@@ -1,9 +1,4 @@
-# bookworm is based on debian, so we can use apt-get
-FROM python:3.12-slim-bookworm
-
-LABEL org.opencontainers.image.source=https://github.com/JulianFP/project-W-runner
-LABEL org.opencontainers.image.description="project-W runner production image"
-LABEL org.opencontainers.image.licenses=AGPL-3.0-only
+FROM python:3.12-slim
 
 WORKDIR /app
 
@@ -15,6 +10,7 @@ RUN pip install openai-whisper
 
 COPY . .
 
-RUN pip install .
+RUN --mount=source=.git,target=.git,type=bind \
+    pip install --no-cache-dir -e .
 
 CMD ["python", "-m", "project_W_runner"]
