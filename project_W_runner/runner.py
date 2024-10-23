@@ -211,7 +211,7 @@ class Runner:
                     # in a field, because the event loop only keeps a weak reference
                     # to it, so it may get garbage collected if we don't store it.
                     self.job_task = asyncio.create_task(self.dispatch_job())
-            elif res.get("error") == "Current job was aborted":
+            elif res.get("abort"):
                 if self.job_task is not None:
                     self.job_task.cancel()
                 else:
