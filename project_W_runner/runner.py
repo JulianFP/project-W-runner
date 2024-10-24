@@ -135,6 +135,8 @@ class Runner:
             model=res.get("model"),
             language=res.get("language"),
         )
+
+        cancelled = False
         try:
             # Note: In order for the background thread to not block the heartbeat loop, it
             # must not keep the GIL throughout its execution. This is true in this case, because
@@ -147,20 +149,29 @@ class Runner:
         except Exception as e:
             logger.error(f"Error processing job: {e}")
             self.current_job_data.error = str(e)
+        except asyncio.CancelledError:
+            cancelled = True
+            errorMsg = "job was aborted"
+            logger.error(errorMsg)
+            self.current_job_data.error = errorMsg
 
-        # Submit the result to the server.
-        data = {}
-        if self.current_job_data.transcript is not None:
-            data["transcript"] = self.current_job_data.transcript
-        elif self.current_job_data.error is not None:
-            data["error_msg"] = self.current_job_data.error
-        # Sanity check if somehow neither transcript nor error is set.
-        if not data:
-            data = {"error_msg": "Unexpected runner error!"}
-        self.current_job_data = None
-        res, status = await self.post("/api/runners/submitJobResult", data=data)
-        if status != 200:
-            raise ShutdownSignal(f"Failed to submit job: {res['error']}")
+        finally:
+            # Submit the result to the server.
+            data = {}
+            if self.current_job_data.transcript is not None:
+                data["transcript"] = self.current_job_data.transcript
+            elif self.current_job_data.error is not None:
+                data["error_msg"] = self.current_job_data.error
+            # Sanity check if somehow neither transcript nor error is set.
+            if not data:
+                data = {"error_msg": "Unexpected runner error!"}
+            self.current_job_data = None
+            res, status = await self.post("/api/runners/submitJobResult", data=data)
+            if status != 200:
+                raise ShutdownSignal(f"Failed to submit job: {res['error']}")
+            # it is best to not swallow CancelledError. See https://docs.python.org/3/library/asyncio-task.html#task-cancellation
+            if cancelled:
+                raise asyncio.CancelledError
 
     async def heartbeat_loop(self):
         """
@@ -200,6 +211,11 @@ class Runner:
                     # in a field, because the event loop only keeps a weak reference
                     # to it, so it may get garbage collected if we don't store it.
                     self.job_task = asyncio.create_task(self.dispatch_job())
+            elif res.get("abort"):
+                if self.job_task is not None:
+                    self.job_task.cancel()
+                else:
+                    self.current_job_data = None
 
     async def run(self):
         async with aiohttp.ClientSession() as session:
