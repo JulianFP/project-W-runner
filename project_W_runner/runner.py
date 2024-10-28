@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -15,6 +16,7 @@ logger = get_logger("project-W-runner")
 # this should be well below the heartbeat
 # timeout of the server.
 HEARTBEAT_INTERVAL = 10
+HEARTBEAT_TIMEOUT = 60
 
 
 @dataclass
@@ -25,7 +27,7 @@ class JobData:
     so no metadata like filename, job id or job owner.
     """
 
-    audio: bytes
+    audio: Optional[bytes]
     model: Optional[str]
     language: Optional[str]
     transcript: Optional[str] = None
@@ -52,7 +54,10 @@ class Runner:
     token: str
     torch_device: Optional[str]
     model_cache_dir: Optional[str]
-    current_job_data: Optional[JobData]
+    current_job_data: Optional[JobData]  # protected by the following cond element
+    current_job_data_cond: asyncio.Condition
+    current_job_aborted: bool
+    commandThreadToExit: bool  # to signal threads that they should stop
     session: aiohttp.ClientSession
 
     def __init__(
@@ -66,34 +71,19 @@ class Runner:
         self.token = token
         self.torch_device = torch_device
         self.model_cache_dir = model_cache_dir
+        self.commandThreadToExit = False
         self.current_job_data = None
-        self.job_task = None
-
-    def process_current_job(self, job_data: JobData) -> str:
-        """
-        Processes the current job, using the Whisper python package.
-        """
-
-        # For some silly reason python doesn't let you do assignments in a lambda.
-        def progress_callback(progress: float):
-            logger.info(f"Progress: {round(progress * 100, 2)}%")
-            self.current_job_data.progress = progress
-
-        audio = prepare_audio(job_data.audio)
-        result = transcribe(
-            audio,
-            job_data.model,
-            job_data.language,
-            progress_callback,
-            self.torch_device,
-            self.model_cache_dir,
-        )
-
-        return result["text"]
+        self.current_job_data_cond = asyncio.Condition()
+        self.current_job_result = None
+        self.current_job_aborted = False
 
     async def post(
-        self, route: str, data: dict = None, params: dict = None, append_auth_header: bool = True
-    ):
+        self,
+        route: str,
+        data: Optional[dict] = None,
+        params: Optional[dict] = None,
+        append_auth_header: bool = True,
+    ) -> tuple[dict, int]:
         """
         Send a POST request to the server.
 
@@ -107,8 +97,7 @@ class Runner:
         ) as response:
             if response.content_type == "application/json":
                 return await response.json(), response.status
-            logger.warning(f"Non-JSON backend response of type {response.content_type}")
-            return None, response.status
+            return {"error": f"Non-JSON backend response of type {response.content_type}"}, 400
 
     async def register(self):
         """
@@ -117,63 +106,120 @@ class Runner:
         if the server requests a re-registration.
         """
         res, status = await self.post("/api/runners/register")
+        # specifically also crash if the runner is already registered to prevent multiple runners with the same token to talk with the backend
         if status != 200:
-            raise ShutdownSignal(f"Failed to register runner: {res['error']}")
+            raise ShutdownSignal(f"Failed to register runner: {res.get('error')}")
         logger.info("Runner registered")
 
-    async def dispatch_job(self):
+    async def unregister(self):
         """
-        Retrieves a new job from the server and processes it in a background
-        thread. Once the job is processed, the result is submitted to the server.
-        This is called when the server assigns a new job to this runner.
+        Unregister the runner with the server.
+        This should be called before ending the program, maybe in a finally clause
         """
-        res, code = await self.post("/api/runners/retrieveJob")
-        if code != 200:
-            raise ShutdownSignal(f"Failed to retrieve job: {res['error']}")
-        self.current_job_data = JobData(
-            audio=base64.b64decode(res["audio"]),
-            model=res.get("model"),
-            language=res.get("language"),
+        res, status = await self.post("/api/runners/unregister")
+        if status != 200:
+            # don't throw ShutdownSignal here because unregister is only called when the runner is already shutting down
+            logger.warning(f"Failed to unregister runner: {res.get('error')}")
+            return
+        logger.info("Runner unregistered")
+
+    def process_job(self, job_data: JobData) -> str:
+        """
+        Processes the current job, using the Whisper python package.
+        This needs to run in a thread since this executes a lot of blocking tasks
+        The calling task needs to hold current_job_data_cond on behalf of this thread because asyncio synchronization primitives are not thread save!
+        """
+        assert job_data.audio != None
+
+        # For some silly reason python doesn't let you do assignments in a lambda.
+        def progress_callback(progress: float):
+            assert self.current_job_data != None
+            self.current_job_data.progress = progress
+            logger.info(f"Progress: {round(progress * 100, 2)}%")
+            if self.commandThreadToExit:
+                self.commandThreadToExit = False
+                raise ShutdownSignal(
+                    "progress_callback received signal to shutdown the processing thread"
+                )
+
+        audio = prepare_audio(job_data.audio)
+        result = transcribe(
+            audio,
+            job_data.model,
+            job_data.language,
+            progress_callback,
+            self.torch_device,
+            self.model_cache_dir,
         )
 
-        cancelled = False
-        try:
-            # Note: In order for the background thread to not block the heartbeat loop, it
-            # must not keep the GIL throughout its execution. This is true in this case, because
-            # the background thread mostly only does three things:
-            # 1. Run ffmpeg in a subprocess (IO-bound)
-            # 2. Download the whisper model (IO-bound)
-            # 3. Run the whisper model (the GIL is released inside pytorch functions)
-            transcript = await asyncio.to_thread(self.process_current_job, self.current_job_data)
-            self.current_job_data.transcript = transcript
-        except Exception as e:
-            logger.error(f"Error processing job: {e}")
-            self.current_job_data.error = str(e)
-        except asyncio.CancelledError:
-            cancelled = True
-            errorMsg = "job was aborted"
-            logger.error(errorMsg)
-            self.current_job_data.error = errorMsg
+        return result["text"]
 
-        finally:
+    def stop_processing(self):
+        if not self.commandThreadToExit:
+            logger.info("Shutting down the processing thread...")
+            self.commandThreadToExit = True
+
+    def abort_job(self):
+        if not self.current_job_aborted:
+            logger.info("Received request to abort the job")
+            self.current_job_aborted = True
+            self.stop_processing()
+
+    async def job_handler_task(self):
+        """
+        This task waits for a new task being assigned to this runner (gets notified by heartbeat_task).
+        Then it will retrieve the job, create a new task to process it, waits for it to finish or to be aborted and then processes and submits the result
+        """
+        while True:
+            async with self.current_job_data_cond:
+                await self.current_job_data_cond.wait()  # waits for heartbeat_task to notify this task
+
+                # retrieve this new job
+                res, code = await self.post("/api/runners/retrieveJob")
+                if code != 200:
+                    raise ShutdownSignal(f"Failed to retrieve job: {res.get('error')}")
+                self.current_job_data = JobData(
+                    audio=base64.b64decode(res["audio"]),
+                    model=res.get("model"),
+                    language=res.get("language"),
+                )
+                logger.info(f"Job retrieved")
+
+            # process job
+            try:
+                transcript = await asyncio.to_thread(self.process_job, self.current_job_data)
+                self.current_job_data.transcript = transcript
+            except ShutdownSignal as e:
+                if self.current_job_aborted:
+                    self.current_job_data.error = "job was aborted"
+                    logger.info("Job was aborted")
+                else:
+                    raise e
+            except Exception as e:
+                logger.error(f"Error processing job: {e}")
+                self.current_job_data.error = str(e)
+
             # Submit the result to the server.
-            data = {}
-            if self.current_job_data.transcript is not None:
-                data["transcript"] = self.current_job_data.transcript
-            elif self.current_job_data.error is not None:
-                data["error_msg"] = self.current_job_data.error
-            # Sanity check if somehow neither transcript nor error is set.
-            if not data:
-                data = {"error_msg": "Unexpected runner error!"}
-            self.current_job_data = None
-            res, status = await self.post("/api/runners/submitJobResult", data=data)
-            if status != 200:
-                raise ShutdownSignal(f"Failed to submit job: {res['error']}")
-            # it is best to not swallow CancelledError. See https://docs.python.org/3/library/asyncio-task.html#task-cancellation
-            if cancelled:
-                raise asyncio.CancelledError
+            async with self.current_job_data_cond:
+                data = {}
+                if self.current_job_data.transcript is not None:
+                    data["transcript"] = self.current_job_data.transcript
+                elif self.current_job_data.error is not None:
+                    data["error_msg"] = self.current_job_data.error
+                else:
+                    # Sanity check if somehow neither transcript nor error is set.
+                    data["error_msg"] = "Unknown runner error"
+                    logger.error("Unknown error occurred while processing job")
 
-    async def heartbeat_loop(self):
+                res, status = await self.post("/api/runners/submitJobResult", data=data)
+                if status != 200:
+                    raise ShutdownSignal(f"Failed to submit job: {res.get('error')}")
+
+                self.current_job_aborted = False
+                self.current_job_data = None
+                logger.info("Job result submitted to backend")
+
+    async def heartbeat_task(self):
         """
         Send a heartbeat to the server at regular intervals.
         This also recognizes when the server dispatched a new job
@@ -182,57 +228,65 @@ class Runner:
         Otherwise, it will keep sending heartbeats until shutdown.
         """
         while True:
-            await asyncio.sleep(HEARTBEAT_INTERVAL)
-            data = {}
-            if self.current_job_data and self.current_job_data.progress is not None:
-                data["progress"] = self.current_job_data.progress
-            res, status = await self.post("/api/runners/heartbeat", data=data)
-            if res is None:
-                # The heartbeat didn't return JSON for some reason. We don't want the runner
-                # to crash yet, so just continue the loop and try again in the next iteration.
-                logger.warning(f"Heartbeat failed!")
-                continue
-            # If the server unregisterd the runner, we don't want to send more heartbeats,
-            # so we exit the loop and let the run() method handle the re-registration.
-            # TODO: Replace this with a proper error code check.
-            if res.get("error") == "This runner is not currently registered as online!":
-                return
-
-            if status != 200:
-                raise ShutdownSignal(f"Heartbeat failed: {res['msg']}")
-
-            if self.current_job_data is None:
-                if "jobAssigned" in res:
-                    logger.info("Job assigned")
-                    # Before fetching the actual job data, make sure that the field
-                    # is not None, so that we don't process the same job twice.
-                    self.current_job_data = JobData(audio=None, model=None, language=None)
-                    # Start the job processing in the background. The task is stored
-                    # in a field, because the event loop only keeps a weak reference
-                    # to it, so it may get garbage collected if we don't store it.
-                    self.job_task = asyncio.create_task(self.dispatch_job())
-            elif res.get("abort"):
-                if self.job_task is not None:
-                    self.job_task.cancel()
+            await self.register()
+            timestamp_of_last_heartbeat = time.time()
+            while True:
+                await asyncio.sleep(HEARTBEAT_INTERVAL)
+                data = {}
+                if self.current_job_data and self.current_job_data.progress is not None:
+                    data["progress"] = self.current_job_data.progress
+                res, status = await self.post("/api/runners/heartbeat", data=data)
+                if res.get("error") == "This runner is not currently registered as online!":
+                    logger.warning(
+                        "This runner was unexpectedly not registered anymore. Trying to re-register now..."
+                    )
+                    break
+                if status != 200:
+                    # The heartbeat failed for some reason. We don't want the runner
+                    # to crash yet, so just continue the loop and try again in the next iteration if HEARTBEAT_TIMEOUT seconds haven't passed yet
+                    if (time.time() - timestamp_of_last_heartbeat) < (
+                        HEARTBEAT_TIMEOUT - HEARTBEAT_INTERVAL
+                    ):
+                        logger.warning(f"Heartbeat failed! Retrying in next iteration...")
+                        continue
+                    else:
+                        raise ShutdownSignal(
+                            f"Heartbeat kept failing for too long: {res.get('error')}: {res.get('msg')}"
+                        )
                 else:
-                    self.current_job_data = None
+                    timestamp_of_last_heartbeat = time.time()
+
+                if self.current_job_data is None:
+                    if "jobAssigned" in res:
+                        logger.info("Job assigned")
+                        # Before fetching the actual job data, make sure that the field
+                        # is not None, so that we don't process the same job twice.
+                        # This is also expected to be the case by the job processing tasks
+                        async with self.current_job_data_cond:
+                            self.current_job_data = JobData(audio=None, model=None, language=None)
+                            # notify job_handler_task about new job
+                            self.current_job_data_cond.notify()
+
+                elif res.get("abort"):
+                    self.abort_job()
 
     async def run(self):
-        async with aiohttp.ClientSession() as session:
-            # Store the session so we can use it in other methods. Note that
-            # we only exit this context manager when the runner is shutting down,
-            # at which point we're not making any more requests over this session.
+        # Store the session so we can use it in other methods. Note that
+        # we only exit this context manager when the runner is shutting down,
+        # at which point we're not making any more requests over this session.
+        async with aiohttp.ClientSession() as self.session:
+            # create the two main tasks in a TaskGroup. This has the benefit that if any of these tasks raise an exception all tasks end and not just that one
+            # all of these tasks need to stay active for the runner to work, if any of them crashes we want the runner to be restarted by docker or whatever to get to a working state again
+            # otherwise the runner would just stay in a broken state forever until restarted manually
             try:
-                self.session = session
-                while True:
-                    await self.register()
-                    # If this function returns, the runner was unregistered. It'll
-                    # automatically re-register in the next iteration of the loop.
-                    await self.heartbeat_loop()
-            except ShutdownSignal as s:
-                # If the server requested a shutdown, we don't want to re-register.
-                logger.fatal(f"Shutting down: {s.reason}")
+                async with asyncio.TaskGroup() as tg:
+                    tg.create_task(self.heartbeat_task())
+                    tg.create_task(self.job_handler_task())
+            except ExceptionGroup as e:
+                if len(e.exceptions) == 1 and isinstance(e.exceptions[0], ShutdownSignal):
+                    logger.fatal(f"Shutting down: {e.exceptions[0].reason}")
+                else:
+                    raise e
             finally:
-                if self.job_task is not None:
-                    self.job_task.cancel()
-                await self.post("/api/runners/unregister")
+                self.stop_processing()
+                await self.unregister()

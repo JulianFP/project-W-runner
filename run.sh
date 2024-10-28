@@ -1,2 +1,2 @@
-#!/usr/bin/bash
-RUNNER_TOKEN=$(cat RUNNER_TOKEN) python -m project_W_runner
+#!/usr/bin/env bash
+python -m project_W_runner
