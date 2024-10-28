@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from jsonschema import Draft202012Validator, ValidationError, validators
-from platformdirs import site_config_path, user_config_path, user_data_dir
+from platformdirs import site_config_path, user_config_path
 from pyaml_env import parse_config
 
 from .logger import get_logger
