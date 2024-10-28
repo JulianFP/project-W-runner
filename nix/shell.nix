@@ -46,7 +46,7 @@ pkgs.mkShell {
     with pkgs;
     [
       (python3.withPackages myPythonPackages)
-      sqlite
+      ffmpeg
     ]
     ++ pre-commit-check.enabledPackages;
 
