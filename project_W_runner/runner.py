@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -27,6 +26,7 @@ class JobData:
     so no metadata like filename, job id or job owner.
     """
 
+    id: Optional[int]
     audio: Optional[bytes]
     model: Optional[str]
     language: Optional[str]
@@ -54,6 +54,7 @@ class Runner:
     token: str
     torch_device: Optional[str]
     model_cache_dir: Optional[str]
+    id: Optional[int]
     current_job_data: Optional[JobData]  # protected by the following cond element
     current_job_data_cond: asyncio.Condition
     current_job_aborted: bool
@@ -76,6 +77,26 @@ class Runner:
         self.current_job_data_cond = asyncio.Condition()
         self.current_job_result = None
         self.current_job_aborted = False
+
+    async def getJobAudio(self) -> tuple[bytes | None, dict | None, int]:
+        """
+        Get the binary data of the audio file from /api/runners/retrieveJobAudio route
+        """
+        headers = {"Authorization": f"Bearer {self.token}"}
+        async with self.session.get(
+            self.backend_url + "/api/runners/retrieveJobAudio", headers=headers
+        ) as response:
+            if response.content_type == "audio/basic":
+                return await response.read(), None, response.status
+            if response.content_type == "application/json":
+                return None, await response.json(), response.status
+            return (
+                None,
+                {
+                    "error": f"Backend response is neither json nor basic audio but of type {response.content_type}"
+                },
+                400,
+            )
 
     async def post(
         self,
@@ -109,7 +130,8 @@ class Runner:
         # specifically also crash if the runner is already registered to prevent multiple runners with the same token to talk with the backend
         if status != 200:
             raise ShutdownSignal(f"Failed to register runner: {res.get('error')}")
-        logger.info("Runner registered")
+        self.id = res.get("runnerID")
+        logger.info(f"Runner registered, this runner has ID {self.id}")
 
     async def unregister(self):
         """
@@ -160,8 +182,8 @@ class Runner:
             self.commandThreadToExit = True
 
     def abort_job(self):
-        if not self.current_job_aborted:
-            logger.info("Received request to abort the job")
+        if not self.current_job_aborted and self.current_job_data != None:
+            logger.info("Received request to abort current job")
             self.current_job_aborted = True
             self.stop_processing()
 
@@ -175,15 +197,22 @@ class Runner:
                 await self.current_job_data_cond.wait()  # waits for heartbeat_task to notify this task
 
                 # retrieve this new job
-                res, code = await self.post("/api/runners/retrieveJob")
-                if code != 200:
-                    raise ShutdownSignal(f"Failed to retrieve job: {res.get('error')}")
+                infoRes, infoCode = await self.post("/api/runners/retrieveJobInfo")
+                if infoCode != 200:
+                    raise ShutdownSignal(f"Failed to retrieve job info: {infoRes.get('error')}")
+                audioRes, audioJson, audioCode = await self.getJobAudio()
+                if audioCode != 200 or audioRes == None:
+                    raise ShutdownSignal(
+                        f"Failed to retrieve job audio: {audioJson.get('error') if audioJson != None else 'response not json'}"
+                    )
+
                 self.current_job_data = JobData(
-                    audio=base64.b64decode(res["audio"]),
-                    model=res.get("model"),
-                    language=res.get("language"),
+                    id=infoRes.get("jobID"),
+                    audio=audioRes,
+                    model=infoRes.get("model"),
+                    language=infoRes.get("language"),
                 )
-                logger.info(f"Job retrieved")
+                logger.info(f"Job with ID {self.current_job_data.id} retrieved")
 
             # process job
             try:
@@ -192,11 +221,11 @@ class Runner:
             except ShutdownSignal as e:
                 if self.current_job_aborted:
                     self.current_job_data.error = "job was aborted"
-                    logger.info("Job was aborted")
+                    logger.info(f"Job with ID {self.current_job_data.id} was aborted")
                 else:
                     raise e
             except Exception as e:
-                logger.error(f"Error processing job: {e}")
+                logger.error(f"Error processing job {self.current_job_data.id}: {e}")
                 self.current_job_data.error = str(e)
 
             # Submit the result to the server.
@@ -213,11 +242,13 @@ class Runner:
 
                 res, status = await self.post("/api/runners/submitJobResult", data=data)
                 if status != 200:
-                    raise ShutdownSignal(f"Failed to submit job: {res.get('error')}")
+                    raise ShutdownSignal(
+                        f"Failed to submit job {self.current_job_data.id}: {res.get('error')}"
+                    )
+                logger.info(f"Result of job {self.current_job_data.id} submitted to backend")
 
                 self.current_job_aborted = False
                 self.current_job_data = None
-                logger.info("Job result submitted to backend")
 
     async def heartbeat_task(self):
         """
@@ -263,7 +294,9 @@ class Runner:
                         # is not None, so that we don't process the same job twice.
                         # This is also expected to be the case by the job processing tasks
                         async with self.current_job_data_cond:
-                            self.current_job_data = JobData(audio=None, model=None, language=None)
+                            self.current_job_data = JobData(
+                                id=None, audio=None, model=None, language=None
+                            )
                             # notify job_handler_task about new job
                             self.current_job_data_cond.notify()
 
