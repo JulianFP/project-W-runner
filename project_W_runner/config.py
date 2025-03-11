@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from jsonschema import Draft202012Validator, ValidationError, validators
-from platformdirs import site_config_path, user_config_path
+from platformdirs import site_config_path, user_cache_dir, user_config_path
 from pyaml_env import parse_config
 
 from .logger import get_logger
@@ -61,6 +61,10 @@ schema = {
         "torchDevice": {"type": "string"},
         "modelCacheDir": {
             "type": "string",
+        },
+        "jobTmpDir": {
+            "type": "string",
+            "default": str(user_cache_dir(appname=programName)),
         },
         "disableOptionValidation": {"type": "boolean", "default": False},
     },

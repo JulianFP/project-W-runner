@@ -1,47 +1,11 @@
-from subprocess import CalledProcessError, run
 from typing import Callable, Optional
 
-import numpy as np
 import tqdm
 from whisper import load_model
-from whisper.transcribe import transcribe as whisper_transcribe
-
-
-def prepare_audio(audio: bytes) -> np.array:
-    """
-    Transform an in-memory audio file into a NumPy array to be passed to Whisper.
-    The Whisper package seems to only allow reading files from disk, and not from memory,
-    so by doing this step ourselves, we can avoid having to write the audio to disk.
-    """
-    args = [
-        "ffmpeg",
-        "-i",
-        "pipe:",
-        "-f",
-        "s16le",
-        "-ac",
-        "1",
-        "-acodec",
-        "pcm_s16le",
-        "-ar",
-        "16000",
-        "-stats",
-        "pipe:",
-    ]
-    try:
-        out = run(args, input=audio, capture_output=True, check=True).stdout
-    except CalledProcessError as e:
-        raise RuntimeError(f"Failed to transform audio: {e.stderr.decode()}") from e
-    except FileNotFoundError as e:
-        raise RuntimeError(
-            f"File not found: {e.filename}\n\nIs ffmpeg installed and in the PATH?"
-        ) from e
-
-    return np.frombuffer(out, np.int16).flatten().astype(np.float32) / 32768.0
 
 
 def transcribe(
-    audio: np.array,
+    audio_file: str,
     model: Optional[str],
     language: Optional[str],
     progress_callback: Callable[[float], None],
@@ -93,7 +57,7 @@ def transcribe(
     tqdm.tqdm = monkeypatching_tqdm(progress_callback)
 
     progress_callback(0.0)
-    ret = whisper_transcribe(model, audio)
+    ret = model.transcribe(audio_file)
     # Just in case the progress_callback was not called with 1.0, do that now.
     progress_callback(1.0)
 

@@ -15,6 +15,7 @@ def main(customconfigpath: Optional[str] = None):
     runner = Runner(
         backend_url=config["backendURL"],
         token=config["runnerToken"],
+        job_file_tmp_dir=config["jobTmpDir"],
         torch_device=config.get("torchDevice"),
         model_cache_dir=config.get("modelCacheDir"),
     )

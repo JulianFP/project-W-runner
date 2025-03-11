@@ -1,11 +1,12 @@
 import asyncio
+import os
 import time
 from dataclasses import dataclass
 from typing import Optional
 
 import aiohttp
 
-from project_W_runner.utils import prepare_audio, transcribe
+from project_W_runner.utils import transcribe
 
 from .logger import get_logger
 
@@ -54,6 +55,7 @@ class Runner:
     token: str
     torch_device: Optional[str]
     model_cache_dir: Optional[str]
+    job_file_tmp_file: str
     id: Optional[int]
     current_job_data: Optional[JobData]  # protected by the following cond element
     current_job_data_cond: asyncio.Condition
@@ -65,6 +67,7 @@ class Runner:
         self,
         backend_url: str,
         token: str,
+        job_file_tmp_dir: str,
         torch_device: Optional[str],
         model_cache_dir: Optional[str] = None,
     ):
@@ -72,11 +75,24 @@ class Runner:
         self.token = token
         self.torch_device = torch_device
         self.model_cache_dir = model_cache_dir
+        self.job_file_tmp_file = os.path.join(os.path.realpath(job_file_tmp_dir), "job_audio")
         self.commandThreadToExit = False
         self.current_job_data = None
         self.current_job_data_cond = asyncio.Condition()
         self.current_job_result = None
         self.current_job_aborted = False
+
+        try:
+            # try to create directory if it doesn't exist yet and test file write permissions
+            if not os.path.exists(job_file_tmp_dir):
+                os.makedirs(job_file_tmp_dir)
+            with open(self.job_file_tmp_file, "wb") as file:
+                file.write(b"write test")
+        except OSError as e:
+            logger.fatal(
+                f"Aborting startup, please make sure that the configured jobTmpDir is writable by this user: {e}"
+            )
+            raise e
 
     async def getJobAudio(self) -> tuple[bytes | None, dict | None, int]:
         """
@@ -164,15 +180,19 @@ class Runner:
                     "progress_callback received signal to shutdown the processing thread"
                 )
 
-        audio = prepare_audio(job_data.audio)
+        with open(self.job_file_tmp_file, "wb") as file:
+            file.write(job_data.audio)
+
         result = transcribe(
-            audio,
+            self.job_file_tmp_file,
             job_data.model,
             job_data.language,
             progress_callback,
             self.torch_device,
             self.model_cache_dir,
         )
+
+        os.remove(self.job_file_tmp_file)
 
         return result["text"]
 
@@ -323,3 +343,5 @@ class Runner:
             finally:
                 self.stop_processing()
                 await self.unregister()
+                if os.path.exists(self.job_file_tmp_file):
+                    os.remove(self.job_file_tmp_file)

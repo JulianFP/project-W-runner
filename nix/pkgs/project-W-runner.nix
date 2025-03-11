@@ -21,7 +21,6 @@ python3Packages.buildPythonPackage rec {
     click
     jsonschema
     openai-whisper
-    numpy
     platformdirs
     pyaml-env
   ];
