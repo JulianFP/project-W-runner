@@ -16,6 +16,7 @@ name = "project_W_runner"
 description = "Add short description here"
 readme = "README.md"
 maintainers = [
+    { name = "Julian Partanen", email = "your@email.com"},
     { name = "Markus Everling", email = "your@email.com" },
 ]
 dynamic = ["version"]
@@ -29,8 +30,9 @@ classifiers = [
 dependencies = [
     "aiohttp",
     "click",
-    "jsonschema",
-    "openai-whisper",
+    "pydantic",
+    "whisperx>=3.3.3",
+    "hf_xet", #for faster huggingface model downloads at startup
     "platformdirs",
     "pyaml_env",
 ]

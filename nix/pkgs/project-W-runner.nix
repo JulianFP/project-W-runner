@@ -7,9 +7,11 @@
 python3Packages.buildPythonPackage rec {
   pname = "project_W_runner";
   version = "0.0.1";
-  format = "setuptools";
+  pyproject = true;
 
   src = ../../.;
+
+  build-system = [ python3Packages.setuptools ];
 
   nativeBuildInputs = with python3Packages; [
     setuptools-scm
@@ -19,8 +21,9 @@ python3Packages.buildPythonPackage rec {
     ffmpeg
     aiohttp
     click
-    jsonschema
-    openai-whisper
+    pydantic
+    whisperx
+    hf-xet
     platformdirs
     pyaml-env
   ];
