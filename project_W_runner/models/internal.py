@@ -1,10 +1,12 @@
-from pydantic import Field
+from pydantic import BaseModel, Field
 
-from .request_data import JobSettings, RunnerSubmitResultRequest
+from .request_data import JobSettings, Transcript
 
 
-class JobData(RunnerSubmitResultRequest):
+class JobData(BaseModel):
     id: int | None = None
+    error_msg: str | None = None
+    transcript: Transcript | None = None
     progress: float | None = Field(
         ge=0.0,
         le=1.0,

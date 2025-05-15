@@ -1,10 +1,10 @@
 import asyncio
-import json
 import time
 from tempfile import NamedTemporaryFile, _TemporaryFileWrapper
+from typing import Any, TypeVar
 
 import aiohttp
-from pydantic import HttpUrl
+from pydantic import HttpUrl, RootModel, ValidationError
 
 from ._version import __version__, __version_tuple__
 from .logger import get_logger
@@ -28,6 +28,14 @@ HEARTBEAT_INTERVAL = 10
 HEARTBEAT_TIMEOUT = 60
 
 
+class ResponseNotJson(Exception):
+    """
+    This gets raised if backend response with non-json response even though json was expected
+    """
+
+    pass
+
+
 class ShutdownSignal(Exception):
     """
     Exception that is raised when the runner should shut down.
@@ -39,6 +47,9 @@ class ShutdownSignal(Exception):
 
     def __init__(self, reason: str):
         self.reason = reason
+
+
+PydanticModel = TypeVar("PydanticModel", covariant=True)
 
 
 class Runner:
@@ -68,9 +79,6 @@ class Runner:
         self.current_job_result = None
         self.current_job_aborted = False
 
-    def __get_error_from_res(self, res: dict | str) -> str:
-        return str(res.get("detail")) if type(res) == dict else str(res)
-
     async def get_job_audio(self):
         """
         Get the binary data of the audio file from /runners/retrieve_job_audio route
@@ -79,17 +87,23 @@ class Runner:
         async with self.session.get(
             self.backend_url + "runners/retrieve_job_audio", headers=headers
         ) as response:
+            if response.status >= 400:
+                if response.content_type == "application/json" and (
+                    detail := (await response.json()).get("detail")
+                ):
+                    raise ShutdownSignal(f"Error while trying to retrieve job audio: {detail}")
+                else:
+                    raise ShutdownSignal(
+                        f"Error while trying to retrieve job audio: Returned status code {response.status} without attached detail"
+                    )
             base_mime_type = response.content_type.split("/")[0].strip()
             if base_mime_type in ["audio", "video"]:
                 async for chunk in response.content.iter_chunked(10240):
                     self.job_tmp_file.write(chunk)
-            elif response.content_type == "application/json":
-                response_json = await response.json()
-                raise ShutdownSignal(
-                    f"Error while trying to retrieve job audio: {self.__get_error_from_res(response_json)}"
-                )
             else:
-                raise ShutdownSignal(f"Error while trying to retrieve job audio: invalid response")
+                raise ShutdownSignal(
+                    f"Error while trying to retrieve job audio: The content type of the response is neither audio nor video"
+                )
 
     async def post(
         self,
@@ -97,7 +111,7 @@ class Runner:
         data: dict | None = None,
         params: dict | None = None,
         append_auth_header: bool = True,
-    ) -> tuple[dict | str, int]:
+    ) -> Any:
         """
         Send a POST request to the server.
 
@@ -106,18 +120,37 @@ class Runner:
         If `append_auth_header` is True (which it is by default), the runner's token is appended to the request headers.
         """
         headers = (
-            {"Authorization": f"Bearer {self.config.runner_token}"} if append_auth_header else {}
+            {"Authorization": f"Bearer {self.config.runner_token.get_secret_value()}"}
+            if append_auth_header
+            else {}
         )
         async with self.session.post(
             self.backend_url + route,
-            data=json.dumps(data),
+            json=data,
             params=params,
             headers=headers,
         ) as response:
+            response.raise_for_status()
             if response.content_type == "application/json":
-                return await response.json(), response.status
+                return await response.json()
             else:
-                return await response.text(), response.status
+                raise ResponseNotJson(
+                    f"The backend returned with content_type {response.content_type} on route {route} even though 'application/json' was expected"
+                )
+
+    async def post_validated(
+        self,
+        route: str,
+        return_model: type[PydanticModel],
+        data: dict | None = None,
+        params: dict | None = None,
+        append_auth_header: bool = True,
+    ) -> PydanticModel:
+        response = await self.post(route, data, params, append_auth_header)
+        if type(response) == dict:
+            return return_model(**response)
+        else:
+            return return_model(**{"root": response})  # expects Pydantic RootModel
 
     async def register(self):
         """
@@ -125,20 +158,25 @@ class Runner:
         This should be called before the main loop or
         if the server requests a re-registration.
         """
-        res, status = await self.post(
-            "runners/register",
-            data=RunnerRegisterRequest(
-                name=self.config.runner_name,
-                priority=self.config.runner_priority,
-                version=__version__,
-                git_hash=str(__version_tuple__[3]),
-                source_code_url=self.source_code_url,
-            ).model_dump(),
-        )
-        # specifically also crash if the runner is already registered to prevent multiple runners with the same token to talk with the backend
-        if status >= 400 or type(res) != str:
-            raise ShutdownSignal(f"Failed to register runner: {self.__get_error_from_res(res)}")
-        self.id = int(res)
+
+        class RunnerId(RootModel):
+            root: int
+
+        try:
+            runner_id = await self.post_validated(
+                "runners/register",
+                RunnerId,
+                data=RunnerRegisterRequest(
+                    name=self.config.runner_name,
+                    priority=self.config.runner_priority,
+                    version=__version__,
+                    git_hash=str(__version_tuple__[3]),
+                    source_code_url=self.source_code_url,
+                ).model_dump(),
+            )
+        except (aiohttp.ClientResponseError, ValidationError, ResponseNotJson) as e:
+            raise ShutdownSignal(f"Failed to register runner: {str(e)}")
+        self.id = runner_id.root
         logger.info(f"Runner registered, this runner has ID {self.id}")
 
     async def unregister(self):
@@ -146,10 +184,11 @@ class Runner:
         Unregister the runner with the server.
         This should be called before ending the program, maybe in a finally clause
         """
-        res, status = await self.post("runners/unregister")
-        if status >= 400:
+        try:
+            await self.post("runners/unregister")
+        except (aiohttp.ClientResponseError, ValidationError, ResponseNotJson) as e:
             # don't throw ShutdownSignal here because unregister is only called when the runner is already shutting down
-            logger.warning(f"Failed to unregister runner: {self.__get_error_from_res(res)}")
+            logger.warning(f"Failed to unregister runner: {str(e)}")
             return
         logger.info("Runner unregistered")
 
@@ -206,17 +245,17 @@ class Runner:
                 await self.current_job_data_cond.wait()  # waits for heartbeat_task to notify this task
 
                 # retrieve this new job
-                info_res, info_code = await self.post("runners/retrieve_job_info")
-                if info_code >= 400 or type(info_res) != dict:
-                    raise ShutdownSignal(
-                        f"Failed to retrieve job info: {self.__get_error_from_res(info_res)}"
+                try:
+                    job_info = await self.post_validated(
+                        "runners/retrieve_job_info", RunnerJobInfoResponse
                     )
-                job_info = RunnerJobInfoResponse.model_validate(info_res)
+                except (aiohttp.ClientResponseError, ValidationError, ResponseNotJson) as e:
+                    raise ShutdownSignal(f"Failed to retrieve job info: {str(e)}")
                 await self.get_job_audio()
 
                 self.current_job_data = JobData(
                     id=job_info.id,
-                    settings=job_info,
+                    settings=job_info.settings,
                 )
                 logger.info(f"Job with ID {self.current_job_data.id} retrieved")
 
@@ -246,10 +285,11 @@ class Runner:
                     data.error_msg = "Unknown runner error"
                     logger.error("Unknown error occurred while processing job")
 
-                res, status = await self.post("runners/submit_job_result", data=data.model_dump())
-                if status >= 400:
+                try:
+                    await self.post("runners/submit_job_result", data=data.model_dump())
+                except (aiohttp.ClientResponseError, ValidationError, ResponseNotJson) as e:
                     raise ShutdownSignal(
-                        f"Failed to submit job {self.current_job_data.id}: {self.__get_error_from_res(res)}"
+                        f"Failed to submit job {self.current_job_data.id}: {str(e)}"
                     )
                 logger.info(f"Result of job {self.current_job_data.id} submitted to backend")
 
@@ -272,30 +312,21 @@ class Runner:
                 data = HeartbeatRequest()
                 if self.current_job_data and self.current_job_data.progress is not None:
                     data.progress = self.current_job_data.progress
-                res, status = await self.post("runners/heartbeat", data=data.model_dump())
-                if (
-                    self.__get_error_from_res(res)
-                    == "This runner is not currently registered as online!"
-                ):
-                    logger.warning(
-                        "This runner was unexpectedly not registered anymore. Trying to re-register now..."
+                try:
+                    heartbeat_resp = await self.post_validated(
+                        "runners/heartbeat", HeartbeatResponse, data=data.model_dump()
                     )
-                    break
-                if status >= 400 or type(res) != dict:
+                except (aiohttp.ClientResponseError, ValidationError, ResponseNotJson) as e:
                     # The heartbeat failed for some reason. We don't want the runner
                     # to crash yet, so just continue the loop and try again in the next iteration if HEARTBEAT_TIMEOUT seconds haven't passed yet
                     if (time.time() - timestamp_of_last_heartbeat) < (
                         HEARTBEAT_TIMEOUT - HEARTBEAT_INTERVAL
                     ):
-                        logger.warning(f"Heartbeat failed! Retrying in next iteration...")
+                        logger.warning(f"Heartbeat failed: {str(e)}! Retrying in next iteration...")
                         continue
                     else:
-                        raise ShutdownSignal(
-                            f"Heartbeat kept failing for too long: {self.__get_error_from_res(res)}: {str(res)}"
-                        )
-                else:
-                    timestamp_of_last_heartbeat = time.time()
-                    heartbeat_resp = HeartbeatResponse.model_validate(res)
+                        raise ShutdownSignal(f"Heartbeat kept failing for too long: {str(e)}")
+                timestamp_of_last_heartbeat = time.time()
 
                 if self.current_job_data is None:
                     if heartbeat_resp.job_assigned:

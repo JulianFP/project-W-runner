@@ -142,7 +142,7 @@ class DiarizationSettings(BaseModel):
         return self
 
 
-class AlignmentPrcessingSettings(BaseModel):
+class AlignmentProcessingSettings(BaseModel):
     highlight_words: bool = False
     max_line_count: int | None = Field(
         default=None,
@@ -164,7 +164,7 @@ class InterpolateMethodEnum(str, Enum):
 
 
 class AlignmentSettings(BaseModel):
-    processing: AlignmentPrcessingSettings = AlignmentPrcessingSettings()
+    processing: AlignmentProcessingSettings = AlignmentProcessingSettings()
     return_char_alignments: bool = False
     interpolate_method: InterpolateMethodEnum = InterpolateMethodEnum.NEAREST
 
@@ -172,11 +172,6 @@ class AlignmentSettings(BaseModel):
 class TaskEnum(str, Enum):
     TRANSCRIBE = "transcribe"
     TRANSLATE = "translate"
-
-
-class VadMethodEnum(str, Enum):
-    PYANNOTE = "pyannote"
-    SILERO = "silero"
 
 
 class VadSettings(BaseModel):
@@ -194,7 +189,7 @@ class VadSettings(BaseModel):
 
 
 class AsrSettings(BaseModel):
-    beam_size: int | None = Field(
+    beam_size: int = Field(
         ge=1,
         default=5,
     )

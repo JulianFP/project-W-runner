@@ -8,5 +8,11 @@ class HeartbeatResponse(BaseModel):
     job_assigned: bool = False
 
 
-class RunnerJobInfoResponse(JobSettings):
+class RunnerJobInfoResponse(BaseModel):
     id: int
+    settings: JobSettings
+
+
+class JobInfoToRunner(BaseModel):
+    id: int
+    settings: JobSettings

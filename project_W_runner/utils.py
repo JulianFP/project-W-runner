@@ -9,7 +9,7 @@ from whisperx import alignment, asr, diarize, utils
 
 from .logger import get_logger
 from .models.request_data import (
-    AlignmentPrcessingSettings,
+    AlignmentProcessingSettings,
     JobModelEnum,
     supported_alignment_languages,
 )
@@ -198,7 +198,7 @@ def transcribe(
     options = (
         job_settings.alignment.processing.model_dump()
         if job_settings.alignment is not None
-        else AlignmentPrcessingSettings().model_dump()
+        else AlignmentProcessingSettings().model_dump()
     )
     writer(result, "file", options)
 
