@@ -59,7 +59,7 @@ packages = [
 # the version control system. For more information see its documentation:
 # https://github.com/pypa/setuptools_scm
 [tool.setuptools_scm]
-version_scheme = "post-release"
+version_scheme = "python-simplified-semver"
 local_scheme = "node-and-date"
 write_to = "project_W_runner/_version.py"
 

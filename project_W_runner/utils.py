@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import whisperx
 from whisperx import alignment, asr, diarize, utils
+from whisperx.vads import pyannote
 
 from .logger import get_logger
 from .models.request_data import (
@@ -92,10 +93,11 @@ def transcribe(
                     raise Exception(
                         f"The detected language '{detected_language}' is not supported for alignment. Either select a different language explicitly or disable alignment!"
                     )
-        print(out)
+        logger.info(f"WhisperX: {out}")
 
     setattr(asr, "print", intercept_stdout)
     setattr(alignment, "print", intercept_stdout)
+    setattr(pyannote, "print", intercept_stdout)
 
     # overwrite the ResultWriter class in the utils module to be able to use StringIO instead of actual files for output
     in_memory_files = {}

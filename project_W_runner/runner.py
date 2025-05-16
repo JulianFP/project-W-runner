@@ -1,14 +1,15 @@
 import asyncio
+import json
 import time
 from tempfile import NamedTemporaryFile, _TemporaryFileWrapper
 from typing import Any, TypeVar
 
 import aiohttp
-from pydantic import HttpUrl, RootModel, ValidationError
+from pydantic import HttpUrl, ValidationError
 
 from ._version import __version__, __version_tuple__
 from .logger import get_logger
-from .models.internal import JobData
+from .models.internal import JobData, ResponseNotJson, RunnerId, ShutdownSignal
 from .models.request_data import (
     HeartbeatRequest,
     RunnerRegisterRequest,
@@ -26,28 +27,6 @@ logger = get_logger("project-W-runner")
 # timeout of the server.
 HEARTBEAT_INTERVAL = 10
 HEARTBEAT_TIMEOUT = 60
-
-
-class ResponseNotJson(Exception):
-    """
-    This gets raised if backend response with non-json response even though json was expected
-    """
-
-    pass
-
-
-class ShutdownSignal(Exception):
-    """
-    Exception that is raised when the runner should shut down.
-    This could be either because a graceful shutdown was requested
-    or because of an error, e.g. if a server request times out.
-    """
-
-    reason: str
-
-    def __init__(self, reason: str):
-        self.reason = reason
-
 
 PydanticModel = TypeVar("PydanticModel", covariant=True)
 
@@ -83,8 +62,8 @@ class Runner:
         """
         Get the binary data of the audio file from /runners/retrieve_job_audio route
         """
-        headers = {"Authorization": f"Bearer {self.config.runner_token}"}
-        async with self.session.get(
+        headers = {"Authorization": f"Bearer {self.config.runner_token.get_secret_value()}"}
+        async with self.session.post(
             self.backend_url + "runners/retrieve_job_audio", headers=headers
         ) as response:
             if response.status >= 400:
@@ -105,6 +84,35 @@ class Runner:
                     f"Error while trying to retrieve job audio: The content type of the response is neither audio nor video"
                 )
 
+    async def get(
+        self,
+        route: str,
+        params: dict | None = None,
+        append_auth_header: bool = True,
+    ) -> Any:
+        """
+        Send a GET request to the server.
+        Optionally accepts `params` (a dictionary of query parameters).
+        If `append_auth_header` is True (which it is by default), the runner's token is appended to the request headers.
+        """
+        headers = (
+            {"Authorization": f"Bearer {self.config.runner_token.get_secret_value()}"}
+            if append_auth_header
+            else {}
+        )
+        async with self.session.get(
+            self.backend_url + route,
+            params=params,
+            headers=headers,
+        ) as response:
+            response.raise_for_status()
+            if response.content_type == "application/json":
+                return await response.json()
+            else:
+                raise ResponseNotJson(
+                    f"The backend returned with content_type {response.content_type} on a get request on route {route} even though 'application/json' was expected"
+                )
+
     async def post(
         self,
         route: str,
@@ -114,9 +122,7 @@ class Runner:
     ) -> Any:
         """
         Send a POST request to the server.
-
-        Optionally accepts `data` (a dictionary of form data) and/or `params` (a dictionary of query parameters).
-
+        Optionally accepts `data` (a dictionary that gets send as json in the body) and/or `params` (a dictionary of query parameters).
         If `append_auth_header` is True (which it is by default), the runner's token is appended to the request headers.
         """
         headers = (
@@ -135,8 +141,21 @@ class Runner:
                 return await response.json()
             else:
                 raise ResponseNotJson(
-                    f"The backend returned with content_type {response.content_type} on route {route} even though 'application/json' was expected"
+                    f"The backend returned with content_type {response.content_type} on a post request on route {route} even though 'application/json' was expected"
                 )
+
+    async def get_validated(
+        self,
+        route: str,
+        return_model: type[PydanticModel],
+        params: dict | None = None,
+        append_auth_header: bool = True,
+    ) -> PydanticModel:
+        response = await self.get(route, params, append_auth_header)
+        if type(response) == dict:
+            return return_model(**response)
+        else:
+            return return_model(**{"root": response})  # expects Pydantic RootModel
 
     async def post_validated(
         self,
@@ -159,9 +178,6 @@ class Runner:
         if the server requests a re-registration.
         """
 
-        class RunnerId(RootModel):
-            root: int
-
         try:
             runner_id = await self.post_validated(
                 "runners/register",
@@ -170,7 +186,7 @@ class Runner:
                     name=self.config.runner_name,
                     priority=self.config.runner_priority,
                     version=__version__,
-                    git_hash=str(__version_tuple__[3]),
+                    git_hash=str(__version_tuple__[-1]).split(".")[0].removeprefix("g"),
                     source_code_url=self.source_code_url,
                 ).model_dump(),
             )
@@ -204,7 +220,6 @@ class Runner:
         def progress_callback(progress: float):
             assert self.current_job_data != None
             self.current_job_data.progress = progress
-            logger.info(f"Progress: {round(progress * 100, 2)}%")
             if self.command_thread_to_exit:
                 self.command_thread_to_exit = False
                 raise ShutdownSignal(
@@ -220,7 +235,10 @@ class Runner:
 
         transcript_dict: dict[str, str | dict] = {}
         for key, val in result.items():
-            transcript_dict["as_" + key] = val.getvalue()
+            if key == "json":
+                transcript_dict["as_json"] = json.loads(val.getvalue())
+            else:
+                transcript_dict[f"as_{key}"] = val.getvalue()
 
         return Transcript.model_validate(transcript_dict)
 
@@ -246,7 +264,7 @@ class Runner:
 
                 # retrieve this new job
                 try:
-                    job_info = await self.post_validated(
+                    job_info = await self.get_validated(
                         "runners/retrieve_job_info", RunnerJobInfoResponse
                     )
                 except (aiohttp.ClientResponseError, ValidationError, ResponseNotJson) as e:
@@ -275,14 +293,13 @@ class Runner:
 
             # Submit the result to the server.
             async with self.current_job_data_cond:
-                data = RunnerSubmitResultRequest()
                 if self.current_job_data.transcript is not None:
-                    data.transcript = self.current_job_data.transcript
+                    data = RunnerSubmitResultRequest(transcript=self.current_job_data.transcript)
                 elif self.current_job_data.error_msg is not None:
-                    data.error_msg = self.current_job_data.error_msg
+                    data = RunnerSubmitResultRequest(error_msg=self.current_job_data.error_msg)
                 else:
                     # Sanity check if somehow neither transcript nor error is set.
-                    data.error_msg = "Unknown runner error"
+                    data = RunnerSubmitResultRequest(error_msg="Unknown runner error")
                     logger.error("Unknown error occurred while processing job")
 
                 try:

@@ -22,7 +22,7 @@ def main(custom_config_path: str | None = None):
     os.environ["PYANNOTE_CACHE"] = str(config.whisper_settings.model_cache_dir)
     os.environ["HF_HOME"] = str(config.whisper_settings.model_cache_dir)
 
-    logger.info("Trying to import runner and whisperx code now...")
+    logger.info("Trying to import runner and WhisperX code now...")
     from .runner import Runner
     from .utils import prefetch_all_models
 
