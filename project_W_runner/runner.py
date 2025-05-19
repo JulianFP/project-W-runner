@@ -52,6 +52,7 @@ class Runner:
         self.backend_url = str(backend_url)
         if self.backend_url[-1] != "/":
             self.backend_url += "/"
+        self.backend_url += "api/runners/"
         self.command_thread_to_exit = False
         self.current_job_data = None
         self.current_job_data_cond = asyncio.Condition()
@@ -60,11 +61,11 @@ class Runner:
 
     async def get_job_audio(self):
         """
-        Get the binary data of the audio file from /runners/retrieve_job_audio route
+        Get the binary data of the audio file from api/runners/retrieve_job_audio route
         """
         headers = {"Authorization": f"Bearer {self.config.runner_token.get_secret_value()}"}
         async with self.session.post(
-            self.backend_url + "runners/retrieve_job_audio", headers=headers
+            f"{self.backend_url}retrieve_job_audio", headers=headers
         ) as response:
             if response.status >= 400:
                 if response.content_type == "application/json" and (
@@ -180,7 +181,7 @@ class Runner:
 
         try:
             runner_id = await self.post_validated(
-                "runners/register",
+                "register",
                 RunnerId,
                 data=RunnerRegisterRequest(
                     name=self.config.runner_name,
@@ -201,7 +202,7 @@ class Runner:
         This should be called before ending the program, maybe in a finally clause
         """
         try:
-            await self.post("runners/unregister")
+            await self.post("unregister")
         except (aiohttp.ClientResponseError, ValidationError, ResponseNotJson) as e:
             # don't throw ShutdownSignal here because unregister is only called when the runner is already shutting down
             logger.warning(f"Failed to unregister runner: {str(e)}")
@@ -264,9 +265,7 @@ class Runner:
 
                 # retrieve this new job
                 try:
-                    job_info = await self.get_validated(
-                        "runners/retrieve_job_info", RunnerJobInfoResponse
-                    )
+                    job_info = await self.get_validated("retrieve_job_info", RunnerJobInfoResponse)
                 except (aiohttp.ClientResponseError, ValidationError, ResponseNotJson) as e:
                     raise ShutdownSignal(f"Failed to retrieve job info: {str(e)}")
                 await self.get_job_audio()
@@ -303,7 +302,7 @@ class Runner:
                     logger.error("Unknown error occurred while processing job")
 
                 try:
-                    await self.post("runners/submit_job_result", data=data.model_dump())
+                    await self.post("submit_job_result", data=data.model_dump())
                 except (aiohttp.ClientResponseError, ValidationError, ResponseNotJson) as e:
                     raise ShutdownSignal(
                         f"Failed to submit job {self.current_job_data.id}: {str(e)}"
@@ -331,7 +330,7 @@ class Runner:
                     data.progress = self.current_job_data.progress
                 try:
                     heartbeat_resp = await self.post_validated(
-                        "runners/heartbeat", HeartbeatResponse, data=data.model_dump()
+                        "heartbeat", HeartbeatResponse, data=data.model_dump()
                     )
                 except (aiohttp.ClientResponseError, ValidationError, ResponseNotJson) as e:
                     # The heartbeat failed for some reason. We don't want the runner
