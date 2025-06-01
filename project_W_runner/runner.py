@@ -36,7 +36,6 @@ class Runner:
     backend_url: str
     source_code_url = "https://github.com/JulianFP/project-W-runner"
     id: int | None
-    job_tmp_file: _TemporaryFileWrapper
     current_job_data: JobData | None  # protected by the following cond element
     current_job_data_cond: asyncio.Condition
     current_job_aborted: bool
@@ -59,7 +58,7 @@ class Runner:
         self.current_job_result = None
         self.current_job_aborted = False
 
-    async def get_job_audio(self):
+    async def get_job_audio(self, job_tmp_file: _TemporaryFileWrapper):
         """
         Get the binary data of the audio file from api/runners/retrieve_job_audio route
         """
@@ -79,7 +78,7 @@ class Runner:
             base_mime_type = response.content_type.split("/")[0].strip()
             if base_mime_type in ["audio", "video"]:
                 async for chunk in response.content.iter_chunked(10240):
-                    self.job_tmp_file.write(chunk)
+                    job_tmp_file.write(chunk)
             else:
                 raise ShutdownSignal(
                     f"Error while trying to retrieve job audio: The content type of the response is neither audio nor video"
@@ -209,7 +208,7 @@ class Runner:
             return
         logger.info("Runner unregistered")
 
-    def process_job(self, job_data: JobData) -> Transcript:
+    def process_job(self, job_data: JobData, job_tmp_file: _TemporaryFileWrapper) -> Transcript:
         """
         Processes the current job, using the Whisper python package.
         This needs to run in a thread since this executes a lot of blocking tasks
@@ -228,7 +227,7 @@ class Runner:
                 )
 
         result = transcribe(
-            self.job_tmp_file.name,
+            job_tmp_file.name,
             job_data.settings,
             self.config.whisper_settings,
             progress_callback,
@@ -260,35 +259,40 @@ class Runner:
         Then it will retrieve the job, create a new task to process it, waits for it to finish or to be aborted and then processes and submits the result
         """
         while True:
-            async with self.current_job_data_cond:
-                await self.current_job_data_cond.wait()  # waits for heartbeat_task to notify this task
+            with NamedTemporaryFile("wb", delete_on_close=False) as job_tmp_file:
+                async with self.current_job_data_cond:
+                    await self.current_job_data_cond.wait()  # waits for heartbeat_task to notify this task
 
-                # retrieve this new job
+                    # retrieve this new job
+                    try:
+                        job_info = await self.get_validated(
+                            "retrieve_job_info", RunnerJobInfoResponse
+                        )
+                    except (aiohttp.ClientResponseError, ValidationError, ResponseNotJson) as e:
+                        raise ShutdownSignal(f"Failed to retrieve job info: {str(e)}")
+                    await self.get_job_audio(job_tmp_file)
+
+                    self.current_job_data = JobData(
+                        id=job_info.id,
+                        settings=job_info.settings,
+                    )
+                    logger.info(f"Job with ID {self.current_job_data.id} retrieved")
+
+                # process job
                 try:
-                    job_info = await self.get_validated("retrieve_job_info", RunnerJobInfoResponse)
-                except (aiohttp.ClientResponseError, ValidationError, ResponseNotJson) as e:
-                    raise ShutdownSignal(f"Failed to retrieve job info: {str(e)}")
-                await self.get_job_audio()
-
-                self.current_job_data = JobData(
-                    id=job_info.id,
-                    settings=job_info.settings,
-                )
-                logger.info(f"Job with ID {self.current_job_data.id} retrieved")
-
-            # process job
-            try:
-                transcript = await asyncio.to_thread(self.process_job, self.current_job_data)
-                self.current_job_data.transcript = transcript
-            except ShutdownSignal as e:
-                if self.current_job_aborted:
-                    self.current_job_data.error_msg = "job was aborted"
-                    logger.info(f"Job with ID {self.current_job_data.id} was aborted")
-                else:
-                    raise e
-            except Exception as e:
-                logger.error(f"Error processing job {self.current_job_data.id}: {e}")
-                self.current_job_data.error_msg = str(e)
+                    transcript = await asyncio.to_thread(
+                        self.process_job, self.current_job_data, job_tmp_file
+                    )
+                    self.current_job_data.transcript = transcript
+                except ShutdownSignal as e:
+                    if self.current_job_aborted:
+                        self.current_job_data.error_msg = "job was aborted"
+                        logger.info(f"Job with ID {self.current_job_data.id} was aborted")
+                    else:
+                        raise e
+                except Exception as e:
+                    logger.error(f"Error processing job {self.current_job_data.id}: {e}")
+                    self.current_job_data.error_msg = str(e)
 
             # Submit the result to the server.
             async with self.current_job_data_cond:
@@ -363,19 +367,18 @@ class Runner:
         # we only exit this context manager when the runner is shutting down,
         # at which point we're not making any more requests over this session.
         async with aiohttp.ClientSession() as self.session:
-            with NamedTemporaryFile("wb", delete_on_close=False) as self.job_tmp_file:
-                # create the two main tasks in a TaskGroup. This has the benefit that if any of these tasks raise an exception all tasks end and not just that one
-                # all of these tasks need to stay active for the runner to work, if any of them crashes we want the runner to be restarted by docker or whatever to get to a working state again
-                # otherwise the runner would just stay in a broken state forever until restarted manually
-                try:
-                    async with asyncio.TaskGroup() as tg:
-                        tg.create_task(self.heartbeat_task())
-                        tg.create_task(self.job_handler_task())
-                except ExceptionGroup as e:
-                    if len(e.exceptions) == 1 and isinstance(e.exceptions[0], ShutdownSignal):
-                        logger.fatal(f"Shutting down: {e.exceptions[0].reason}")
-                    else:
-                        raise e
-                finally:
-                    self.stop_processing()
-                    await self.unregister()
+            # create the two main tasks in a TaskGroup. This has the benefit that if any of these tasks raise an exception all tasks end and not just that one
+            # all of these tasks need to stay active for the runner to work, if any of them crashes we want the runner to be restarted by docker or whatever to get to a working state again
+            # otherwise the runner would just stay in a broken state forever until restarted manually
+            try:
+                async with asyncio.TaskGroup() as tg:
+                    tg.create_task(self.heartbeat_task())
+                    tg.create_task(self.job_handler_task())
+            except ExceptionGroup as e:
+                if len(e.exceptions) == 1 and isinstance(e.exceptions[0], ShutdownSignal):
+                    logger.fatal(f"Shutting down: {e.exceptions[0].reason}")
+                else:
+                    raise e
+            finally:
+                self.stop_processing()
+                await self.unregister()
