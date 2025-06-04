@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, RootModel
 
-from .request_data import JobSettings, Transcript
+from .base import JobSettingsBase
+from .request_data import Transcript
 
 
 class ResponseNotJson(Exception):
@@ -33,7 +34,7 @@ class JobData(BaseModel):
         le=100.0,
         default=None,
     )
-    settings: JobSettings | None = None
+    settings: JobSettingsBase | None = None
 
 
 class RunnerId(RootModel):

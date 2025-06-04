@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-from .request_data import JobSettings
+from .base import JobSettingsBase
 
 
 class HeartbeatResponse(BaseModel):
@@ -10,9 +10,4 @@ class HeartbeatResponse(BaseModel):
 
 class RunnerJobInfoResponse(BaseModel):
     id: int
-    settings: JobSettings
-
-
-class JobInfoToRunner(BaseModel):
-    id: int
-    settings: JobSettings
+    settings: JobSettingsBase

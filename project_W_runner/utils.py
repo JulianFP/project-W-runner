@@ -9,12 +9,12 @@ from whisperx import alignment, asr, diarize, utils
 from whisperx.vads import pyannote
 
 from .logger import get_logger
-from .models.request_data import (
+from .models.base import (
     AlignmentProcessingSettings,
     JobModelEnum,
+    JobSettingsBase,
     supported_alignment_languages,
 )
-from .models.response_data import JobSettings
 from .models.settings import WhisperSettings
 
 logger = get_logger("project-W-runner")
@@ -66,7 +66,7 @@ def prefetch_all_models(whisper_settings: WhisperSettings):
 
 def transcribe(
     audio_file: str,
-    job_settings: JobSettings,
+    job_settings: JobSettingsBase,
     whisper_settings: WhisperSettings,
     progress_callback: Callable[[float], None],
 ) -> dict[str, StringIO]:
