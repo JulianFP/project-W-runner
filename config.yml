@@ -1,2 +1,9 @@
-backendURL: http://localhost:5000
-runnerToken: !ENV ${RUNNER_TOKEN}
+backend_url: http://localhost:8000
+runner_name: "test runner"
+runner_token: <your runner token>
+whisper_settings:
+  hf_token: <your huggingface token>
+  torch_device: cpu
+  compute_type: int8
+  batch_size: 4
+skip_model_prefetch: true
