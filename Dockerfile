@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg git
 
 # install whisper first, as it's a very large dependency (multiple GBs of data) which
 # we don't want to re-download every time we change the code.
-RUN pip install openai-whisper
+RUN pip install whisperx
 
 COPY . .
 

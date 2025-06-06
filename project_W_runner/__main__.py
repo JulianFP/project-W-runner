@@ -12,11 +12,24 @@ logger = get_logger("project-W-runner")
 
 
 @click.command()
-@click.option("--custom_config_path", type=str, required=False)
-def main(custom_config_path: str | None = None):
+@click.version_option(__version__)
+@click.option(
+    "--custom_config_path",
+    type=click.Path(
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=True,
+        allow_dash=False,
+        path_type=Path,
+    ),
+    required=False,
+    help="Path to search for the config.yml file in addition to the users and sites config paths (xdg dirs on Linux) and the current working directory.",
+)
+def main(custom_config_path: Path | None):
     logger.info(f"Running application version {__version__}")
 
-    config = load_config([Path(custom_config_path)]) if custom_config_path else load_config()
+    config = load_config([custom_config_path]) if custom_config_path else load_config()
 
     # set env vars first before importing Runner and prefetch code because that would trigger the code that reads the env var
     os.environ["PYANNOTE_CACHE"] = str(config.whisper_settings.model_cache_dir)
