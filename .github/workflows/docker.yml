@@ -1,13 +1,15 @@
-name: Docker
+name: "Build & Push Docker image"
 on:
   push:
     branches:
       - main
+      - dev
     tags:
       - "v*"
   pull_request:
     branches:
       - main
+      - dev
 
 jobs:
   docker-build:
