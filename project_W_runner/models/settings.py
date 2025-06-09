@@ -62,22 +62,27 @@ class BackendSettings(BaseModel):
     )
 
 
-class Settings(BaseModel):
+class RunnerAttributes(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    runner_name: str = Field(
+    name: str = Field(
         max_length=40,
-        description="A unique string identifier for the runner. This name is displayed to users for transparency reasons so that they have some idea where their data is going and so that it is easier to identify runners. Ideally the name should contain the location/organization where the runner is hosted",
+        description="A unique string identifier. This name is displayed to users for transparency reasons so that they have some idea where their data is going and so that it is easier to identify runners. Ideally the name should contain the location/organization where the runner is hosted",
         examples=[
             "university runner 1",
             "working group runner 3",
             "cloud cluster runner 12",
         ],
     )
-    runner_priority: int = Field(
+    priority: int = Field(
         gt=0,
         default=100,
-        description="The priority of this runner in the job assignment process. If both runner A and B are free and runner A has a higher priority than runner B it means that any given job will always be assigned to runner A first. Furthermore the runner priority should be a relative measure for the runners hardware capability, e.g. if runner A has double the priority as runner B it should be roughly twice as powerful",
+        description="The priority in the job assignment process. If both runner A and B are free and runner A has a higher priority than runner B it means that any given job will always be assigned to runner A first. Furthermore the runner priority should be a relative measure for the runners hardware capability, e.g. if runner A has double the priority as runner B it should be roughly twice as powerful",
     )
+
+
+class Settings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    runner_attributes: RunnerAttributes = Field(description="General attributes of this runner")
     backend_settings: BackendSettings = Field(description="How to connect to the Project-W Backend")
     whisper_settings: WhisperSettings = Field(
         description="Settings related to performing the actual transcription and running the whisper and other ML models",

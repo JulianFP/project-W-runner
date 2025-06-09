@@ -195,8 +195,8 @@ class Runner:
                 "register",
                 RunnerId,
                 data=RunnerRegisterRequest(
-                    name=self.config.runner_name,
-                    priority=self.config.runner_priority,
+                    name=self.config.runner_attributes.name,
+                    priority=self.config.runner_attributes.priority,
                     version=__version__,
                     git_hash=str(__version_tuple__[-1]).split(".")[0].removeprefix("g"),
                     source_code_url=self.source_code_url,

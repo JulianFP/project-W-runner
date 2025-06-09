@@ -1,6 +1,8 @@
-backend_url: http://localhost:8000
-runner_name: "test runner"
-runner_token: <your runner token>
+runner_attributes:
+  name: "test runner"
+backend_settings:
+  url: http://localhost:8000
+  auth_token: <your runner token>
 whisper_settings:
   hf_token: <your huggingface token>
   torch_device: cpu
