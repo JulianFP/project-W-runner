@@ -28,16 +28,18 @@ classifiers = [
     "License :: OSI Approved :: GNU Affero General Public License v3",
 ]
 dependencies = [
-    "aiohttp",
+    "httpx",
     "click",
     "pydantic",
-    "whisperx>=3.3.3",
-    "hf_xet", #for faster huggingface model downloads at startup
     "platformdirs",
     "pyaml_env",
 ]
 
 [project.optional-dependencies]
+not_dummy = [
+    "whisperx>=3.3.3",
+    "hf_xet", #for faster huggingface model downloads at startup
+]
 tests = [
     "pytest",
     "pytest-cov",

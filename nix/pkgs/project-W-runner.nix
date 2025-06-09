@@ -19,7 +19,7 @@ python3Packages.buildPythonPackage rec {
 
   propagatedBuildInputs = with python3Packages; [
     ffmpeg
-    aiohttp
+    httpx
     click
     pydantic
     whisperx

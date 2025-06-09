@@ -1,11 +1,16 @@
 import asyncio
 import json
+import ssl
 import time
+from io import StringIO
 from tempfile import NamedTemporaryFile, _TemporaryFileWrapper
-from typing import Any, TypeVar
+from typing import Any, Callable, TypeVar
 
-import aiohttp
-from pydantic import HttpUrl, ValidationError
+import certifi
+import httpx
+from pydantic import ValidationError
+
+from project_W_runner.models.base import JobSettingsBase
 
 from ._version import __version__, __version_tuple__
 from .logger import get_logger
@@ -17,8 +22,7 @@ from .models.request_data import (
     Transcript,
 )
 from .models.response_data import HeartbeatResponse, RunnerJobInfoResponse
-from .models.settings import Settings
-from .utils import transcribe
+from .models.settings import Settings, WhisperSettings
 
 logger = get_logger("project-W-runner")
 
@@ -32,6 +36,9 @@ PydanticModel = TypeVar("PydanticModel", covariant=True)
 
 
 class Runner:
+    transcribe: Callable[
+        [str, JobSettingsBase, WhisperSettings, Callable[[float], None]], dict[str, StringIO]
+    ]
     config: Settings
     backend_url: str
     source_code_url = "https://github.com/JulianFP/project-W-runner"
@@ -40,15 +47,16 @@ class Runner:
     current_job_data_cond: asyncio.Condition
     current_job_aborted: bool
     command_thread_to_exit: bool  # to signal threads that they should stop
-    session: aiohttp.ClientSession
+    session: httpx.AsyncClient
 
     def __init__(
         self,
+        transcribe_function,
         config: Settings,
-        backend_url: HttpUrl,
     ):
+        self.transcribe = transcribe_function
         self.config = config
-        self.backend_url = str(backend_url)
+        self.backend_url = str(config.backend_settings.url)
         if self.backend_url[-1] != "/":
             self.backend_url += "/"
         self.backend_url += "api/runners/"
@@ -62,27 +70,27 @@ class Runner:
         """
         Get the binary data of the audio file from api/runners/retrieve_job_audio route
         """
-        headers = {"Authorization": f"Bearer {self.config.runner_token.get_secret_value()}"}
-        async with self.session.post(
-            f"{self.backend_url}retrieve_job_audio", headers=headers
-        ) as response:
-            if response.status >= 400:
-                if response.content_type == "application/json" and (
-                    detail := (await response.json()).get("detail")
-                ):
-                    raise ShutdownSignal(f"Error while trying to retrieve job audio: {detail}")
-                else:
-                    raise ShutdownSignal(
-                        f"Error while trying to retrieve job audio: Returned status code {response.status} without attached detail"
-                    )
-            base_mime_type = response.content_type.split("/")[0].strip()
-            if base_mime_type in ["audio", "video"]:
-                async for chunk in response.content.iter_chunked(10240):
-                    job_tmp_file.write(chunk)
+        headers = {
+            "Authorization": f"Bearer {self.config.backend_settings.auth_token.get_secret_value()}"
+        }
+        response = await self.session.post(f"{self.backend_url}retrieve_job_audio", headers=headers)
+        if response.status_code >= 400:
+            if response.headers.get("Content-Type") == "application/json" and (
+                detail := (response.json()).get("detail")
+            ):
+                raise ShutdownSignal(f"Error while trying to retrieve job audio: {detail}")
             else:
                 raise ShutdownSignal(
-                    f"Error while trying to retrieve job audio: The content type of the response is neither audio nor video"
+                    f"Error while trying to retrieve job audio: Returned status code {response.status_code} without attached detail"
                 )
+        base_mime_type = response.headers.get("Content-Type").split("/")[0].strip()
+        if base_mime_type in ["audio", "video"]:
+            async for chunk in response.aiter_bytes(10240):
+                job_tmp_file.write(chunk)
+        else:
+            raise ShutdownSignal(
+                f"Error while trying to retrieve job audio: The content type of the response is neither audio nor video"
+            )
 
     async def get(
         self,
@@ -96,22 +104,24 @@ class Runner:
         If `append_auth_header` is True (which it is by default), the runner's token is appended to the request headers.
         """
         headers = (
-            {"Authorization": f"Bearer {self.config.runner_token.get_secret_value()}"}
+            {
+                "Authorization": f"Bearer {self.config.backend_settings.auth_token.get_secret_value()}"
+            }
             if append_auth_header
             else {}
         )
-        async with self.session.get(
+        response = await self.session.get(
             self.backend_url + route,
             params=params,
             headers=headers,
-        ) as response:
-            response.raise_for_status()
-            if response.content_type == "application/json":
-                return await response.json()
-            else:
-                raise ResponseNotJson(
-                    f"The backend returned with content_type {response.content_type} on a get request on route {route} even though 'application/json' was expected"
-                )
+        )
+        response.raise_for_status()
+        if response.headers.get("Content-Type") == "application/json":
+            return response.json()
+        else:
+            raise ResponseNotJson(
+                f"The backend returned with content_type {response.headers.get("Content-Type")} on a get request on route {route} even though 'application/json' was expected"
+            )
 
     async def post(
         self,
@@ -126,23 +136,25 @@ class Runner:
         If `append_auth_header` is True (which it is by default), the runner's token is appended to the request headers.
         """
         headers = (
-            {"Authorization": f"Bearer {self.config.runner_token.get_secret_value()}"}
+            {
+                "Authorization": f"Bearer {self.config.backend_settings.auth_token.get_secret_value()}"
+            }
             if append_auth_header
             else {}
         )
-        async with self.session.post(
+        response = await self.session.post(
             self.backend_url + route,
             json=data,
             params=params,
             headers=headers,
-        ) as response:
-            response.raise_for_status()
-            if response.content_type == "application/json":
-                return await response.json()
-            else:
-                raise ResponseNotJson(
-                    f"The backend returned with content_type {response.content_type} on a post request on route {route} even though 'application/json' was expected"
-                )
+        )
+        response.raise_for_status()
+        if response.headers.get("Content-Type") == "application/json":
+            return response.json()
+        else:
+            raise ResponseNotJson(
+                f"The backend returned with content_type {response.headers.get("Content-Type")} on a post request on route {route} even though 'application/json' was expected"
+            )
 
     async def get_validated(
         self,
@@ -190,7 +202,7 @@ class Runner:
                     source_code_url=self.source_code_url,
                 ).model_dump(),
             )
-        except (aiohttp.ClientResponseError, ValidationError, ResponseNotJson) as e:
+        except (httpx.HTTPError, ValidationError, ResponseNotJson) as e:
             raise ShutdownSignal(f"Failed to register runner: {str(e)}")
         self.id = runner_id.root
         logger.info(f"Runner registered, this runner has ID {self.id}")
@@ -202,7 +214,7 @@ class Runner:
         """
         try:
             await self.post("unregister")
-        except (aiohttp.ClientResponseError, ValidationError, ResponseNotJson) as e:
+        except (httpx.HTTPError, ValidationError, ResponseNotJson) as e:
             # don't throw ShutdownSignal here because unregister is only called when the runner is already shutting down
             logger.warning(f"Failed to unregister runner: {str(e)}")
             return
@@ -226,7 +238,7 @@ class Runner:
                     "progress_callback received signal to shutdown the processing thread"
                 )
 
-        result = transcribe(
+        result = self.transcribe(
             job_tmp_file.name,
             job_data.settings,
             self.config.whisper_settings,
@@ -268,7 +280,7 @@ class Runner:
                         job_info = await self.get_validated(
                             "retrieve_job_info", RunnerJobInfoResponse
                         )
-                    except (aiohttp.ClientResponseError, ValidationError, ResponseNotJson) as e:
+                    except (httpx.HTTPError, ValidationError, ResponseNotJson) as e:
                         raise ShutdownSignal(f"Failed to retrieve job info: {str(e)}")
                     await self.get_job_audio(job_tmp_file)
 
@@ -307,7 +319,7 @@ class Runner:
 
                 try:
                     await self.post("submit_job_result", data=data.model_dump())
-                except (aiohttp.ClientResponseError, ValidationError, ResponseNotJson) as e:
+                except (httpx.HTTPError, ValidationError, ResponseNotJson) as e:
                     raise ShutdownSignal(
                         f"Failed to submit job {self.current_job_data.id}: {str(e)}"
                     )
@@ -336,7 +348,7 @@ class Runner:
                     heartbeat_resp = await self.post_validated(
                         "heartbeat", HeartbeatResponse, data=data.model_dump()
                     )
-                except (aiohttp.ClientResponseError, ValidationError, ResponseNotJson) as e:
+                except (httpx.HTTPError, ValidationError, ResponseNotJson) as e:
                     # The heartbeat failed for some reason. We don't want the runner
                     # to crash yet, so just continue the loop and try again in the next iteration if HEARTBEAT_TIMEOUT seconds haven't passed yet
                     if (time.time() - timestamp_of_last_heartbeat) < (
@@ -363,10 +375,15 @@ class Runner:
                     self.abort_job()
 
     async def run(self):
+        if self.config.backend_settings.ca_pem_file_path:
+            cafile = str(self.config.backend_settings.ca_pem_file_path)
+        else:
+            cafile = certifi.where()
+        ctx = ssl.create_default_context(cafile=cafile)
         # Store the session so we can use it in other methods. Note that
         # we only exit this context manager when the runner is shutting down,
         # at which point we're not making any more requests over this session.
-        async with aiohttp.ClientSession() as self.session:
+        async with httpx.AsyncClient(verify=ctx) as self.session:
             # create the two main tasks in a TaskGroup. This has the benefit that if any of these tasks raise an exception all tasks end and not just that one
             # all of these tasks need to stay active for the runner to work, if any of them crashes we want the runner to be restarted by docker or whatever to get to a working state again
             # otherwise the runner would just stay in a broken state forever until restarted manually

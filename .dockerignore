@@ -1,6 +1,11 @@
-# Don't copy the config into the image, it should be
-# mounted from the host instead.
-/config.yml
-
-# Don't copy any pycaches into the image.
+tests/
+doc/
+nix/
+.github/
+.gitignore
+README.md
+flake.*
+**.yml
+**.yaml
+**.sh
 **/__pycache__/

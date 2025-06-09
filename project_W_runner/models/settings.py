@@ -1,7 +1,15 @@
 from enum import Enum
 
 from platformdirs import user_cache_path
-from pydantic import BaseModel, ConfigDict, DirectoryPath, Field, HttpUrl, SecretStr
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    DirectoryPath,
+    Field,
+    FilePath,
+    HttpUrl,
+    SecretStr,
+)
 
 program_name = "project-W-runner"
 
@@ -40,14 +48,22 @@ class WhisperSettings(BaseModel):
     )
 
 
+class BackendSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    url: HttpUrl = Field(
+        description="The Url used to connect to the backend",
+    )
+    ca_pem_file_path: FilePath | None = Field(
+        default=None,
+        description="Path to the pem certs file that includes the certificates that should be trusted for the backend (alternative certificate verification). Useful if the backend uses a self-signed certificate",
+    )
+    auth_token: SecretStr = Field(
+        description="The token of this runner that is used to authenticate to the backend. The backend also uses this token to identify the runner which means that each runner needs to have their own unique token",
+    )
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    backend_url: HttpUrl = Field(
-        description="The Url used to connect to the Project-W Backend",
-    )
-    runner_token: SecretStr = Field(
-        description="The token of this runner that is used to authenticate to the Project-W backend. The backend also uses this token to identify the runner which means that each runner needs to have their own unique token",
-    )
     runner_name: str = Field(
         max_length=40,
         description="A unique string identifier for the runner. This name is displayed to users for transparency reasons so that they have some idea where their data is going and so that it is easier to identify runners. Ideally the name should contain the location/organization where the runner is hosted",
@@ -62,7 +78,10 @@ class Settings(BaseModel):
         default=100,
         description="The priority of this runner in the job assignment process. If both runner A and B are free and runner A has a higher priority than runner B it means that any given job will always be assigned to runner A first. Furthermore the runner priority should be a relative measure for the runners hardware capability, e.g. if runner A has double the priority as runner B it should be roughly twice as powerful",
     )
-    whisper_settings: WhisperSettings
+    backend_settings: BackendSettings = Field(description="How to connect to the Project-W Backend")
+    whisper_settings: WhisperSettings = Field(
+        description="Settings related to performing the actual transcription and running the whisper and other ML models",
+    )
     skip_model_prefetch: bool = Field(
         default=False,
         description="Whether to register to backend without to prefetch all models first. It is not recommended to enable this in production since it leads to users having to wait for the runner to fetch models first (which could very well fail, especially for the diarization model)",

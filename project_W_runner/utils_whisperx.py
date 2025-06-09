@@ -204,7 +204,7 @@ def transcribe(
     )
     writer(result, "file", options)
 
-    # Just in case the progress_callback was not called with 1.0, do that now.
-    progress_callback(1.0)
+    # Just in case the progress_callback was not called with 100.0, do that now.
+    progress_callback(100.0)
 
     return in_memory_files

@@ -7,6 +7,7 @@ import click
 from ._version import __version__
 from .config import load_config
 from .logger import get_logger
+from .runner import Runner
 
 logger = get_logger("project-W-runner")
 
@@ -26,7 +27,12 @@ logger = get_logger("project-W-runner")
     required=False,
     help="Path to search for the config.yml file in addition to the users and sites config paths (xdg dirs on Linux) and the current working directory.",
 )
-def main(custom_config_path: Path | None):
+@click.option(
+    "--dummy",
+    is_flag=True,
+    help="Start in dummy mode. This will not load whisperx and not do any transcription but instead just simulate a transcription returning the same transcript every time. Only use for testing/development purposes, never in production!",
+)
+def main(custom_config_path: Path | None, dummy: bool):
     logger.info(f"Running application version {__version__}")
 
     config = load_config([custom_config_path]) if custom_config_path else load_config()
@@ -35,22 +41,31 @@ def main(custom_config_path: Path | None):
     os.environ["PYANNOTE_CACHE"] = str(config.whisper_settings.model_cache_dir)
     os.environ["HF_HOME"] = str(config.whisper_settings.model_cache_dir)
 
-    logger.info("Trying to import runner and WhisperX code now...")
-    from .runner import Runner
-    from .utils import prefetch_all_models
-
-    logger.info("Import successful")
-
-    if config.skip_model_prefetch:
+    if dummy:
         logger.warning(
-            "Skipping model prefetching, this might lead to failing jobs due to not being able to fetch models and significantly higher job processing times!"
+            "Started runner in dummy mode. This runner will only simulate a transcription returning the same transcript every time. Only use for testing/development purposes, never in production!"
         )
+        logger.info("Trying to import dummy transcribe code now...")
+        from .utils_dummy import transcribe
+
+        logger.info("Import successful")
+
     else:
-        prefetch_all_models(config.whisper_settings)
+        logger.info("Trying to import WhisperX code now...")
+        from .utils_whisperx import prefetch_all_models, transcribe
+
+        logger.info("Import successful")
+
+        if config.skip_model_prefetch:
+            logger.warning(
+                "Skipping model prefetching, this might lead to failing jobs due to not being able to fetch models and significantly higher job processing times!"
+            )
+        else:
+            prefetch_all_models(config.whisper_settings)
 
     runner = Runner(
+        transcribe_function=transcribe,
         config=config,
-        backend_url=config.backend_url,
     )
     asyncio.run(runner.run())
 
