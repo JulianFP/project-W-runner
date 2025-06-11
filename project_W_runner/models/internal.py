@@ -21,8 +21,8 @@ class ShutdownSignal(Exception):
 
     reason: str
 
-    def __init__(self, reason: str):
-        self.reason = reason
+    def __init__(self, reason: str, e: Exception | None = None):
+        self.reason = f"{reason}: {type(e).__name__}: '{str(e)}'"
 
 
 class JobData(BaseModel):

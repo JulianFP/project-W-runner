@@ -59,7 +59,7 @@ class Runner:
         self.backend_url = str(config.backend_settings.url)
         if self.backend_url[-1] != "/":
             self.backend_url += "/"
-        self.backend_url += "api/runners/"
+        self.backend_url += "api/runners"
         self.command_thread_to_exit = False
         self.current_job_data = None
         self.current_job_data_cond = asyncio.Condition()
@@ -70,10 +70,7 @@ class Runner:
         """
         Get the binary data of the audio file from api/runners/retrieve_job_audio route
         """
-        headers = {
-            "Authorization": f"Bearer {self.config.backend_settings.auth_token.get_secret_value()}"
-        }
-        response = await self.session.post(f"{self.backend_url}retrieve_job_audio", headers=headers)
+        response = await self.session.post("/retrieve_job_audio")
         if response.status_code >= 400:
             if response.headers.get("Content-Type") == "application/json" and (
                 detail := (response.json()).get("detail")
@@ -96,24 +93,14 @@ class Runner:
         self,
         route: str,
         params: dict | None = None,
-        append_auth_header: bool = True,
     ) -> Any:
         """
         Send a GET request to the server.
         Optionally accepts `params` (a dictionary of query parameters).
-        If `append_auth_header` is True (which it is by default), the runner's token is appended to the request headers.
         """
-        headers = (
-            {
-                "Authorization": f"Bearer {self.config.backend_settings.auth_token.get_secret_value()}"
-            }
-            if append_auth_header
-            else {}
-        )
         response = await self.session.get(
-            self.backend_url + route,
+            route,
             params=params,
-            headers=headers,
         )
         response.raise_for_status()
         if response.headers.get("Content-Type") == "application/json":
@@ -128,25 +115,15 @@ class Runner:
         route: str,
         data: dict | None = None,
         params: dict | None = None,
-        append_auth_header: bool = True,
     ) -> Any:
         """
         Send a POST request to the server.
         Optionally accepts `data` (a dictionary that gets send as json in the body) and/or `params` (a dictionary of query parameters).
-        If `append_auth_header` is True (which it is by default), the runner's token is appended to the request headers.
         """
-        headers = (
-            {
-                "Authorization": f"Bearer {self.config.backend_settings.auth_token.get_secret_value()}"
-            }
-            if append_auth_header
-            else {}
-        )
         response = await self.session.post(
-            self.backend_url + route,
+            route,
             json=data,
             params=params,
-            headers=headers,
         )
         response.raise_for_status()
         if response.headers.get("Content-Type") == "application/json":
@@ -161,9 +138,8 @@ class Runner:
         route: str,
         return_model: type[PydanticModel],
         params: dict | None = None,
-        append_auth_header: bool = True,
     ) -> PydanticModel:
-        response = await self.get(route, params, append_auth_header)
+        response = await self.get(route, params)
         if type(response) == dict:
             return return_model(**response)
         else:
@@ -175,9 +151,8 @@ class Runner:
         return_model: type[PydanticModel],
         data: dict | None = None,
         params: dict | None = None,
-        append_auth_header: bool = True,
     ) -> PydanticModel:
-        response = await self.post(route, data, params, append_auth_header)
+        response = await self.post(route, data, params)
         if type(response) == dict:
             return return_model(**response)
         else:
@@ -192,7 +167,7 @@ class Runner:
 
         try:
             runner_id = await self.post_validated(
-                "register",
+                "/register",
                 RunnerId,
                 data=RunnerRegisterRequest(
                     name=self.config.runner_attributes.name,
@@ -203,7 +178,7 @@ class Runner:
                 ).model_dump(),
             )
         except (httpx.HTTPError, ValidationError, ResponseNotJson) as e:
-            raise ShutdownSignal(f"Failed to register runner: {str(e)}")
+            raise ShutdownSignal(f"Failed to register runner", e)
         self.id = runner_id.root
         logger.info(f"Runner registered, this runner has ID {self.id}")
 
@@ -213,10 +188,10 @@ class Runner:
         This should be called before ending the program, maybe in a finally clause
         """
         try:
-            await self.post("unregister")
+            await self.post("/unregister")
         except (httpx.HTTPError, ValidationError, ResponseNotJson) as e:
             # don't throw ShutdownSignal here because unregister is only called when the runner is already shutting down
-            logger.warning(f"Failed to unregister runner: {str(e)}")
+            logger.warning(f"Failed to unregister runner", e)
             return
         logger.info("Runner unregistered")
 
@@ -278,10 +253,10 @@ class Runner:
                     # retrieve this new job
                     try:
                         job_info = await self.get_validated(
-                            "retrieve_job_info", RunnerJobInfoResponse
+                            "/retrieve_job_info", RunnerJobInfoResponse
                         )
                     except (httpx.HTTPError, ValidationError, ResponseNotJson) as e:
-                        raise ShutdownSignal(f"Failed to retrieve job info: {str(e)}")
+                        raise ShutdownSignal(f"Failed to retrieve job info", e)
                     await self.get_job_audio(job_tmp_file)
 
                     self.current_job_data = JobData(
@@ -303,8 +278,10 @@ class Runner:
                     else:
                         raise e
                 except Exception as e:
-                    logger.error(f"Error processing job {self.current_job_data.id}: {e}")
-                    self.current_job_data.error_msg = str(e)
+                    logger.error(
+                        f"Error processing job {self.current_job_data.id}: {type(e).__name__}: '{str(e)}'"
+                    )
+                    self.current_job_data.error_msg = f"{type(e).__name__}: '{str(e)}'"
 
             # Submit the result to the server.
             async with self.current_job_data_cond:
@@ -318,11 +295,9 @@ class Runner:
                     logger.error("Unknown error occurred while processing job")
 
                 try:
-                    await self.post("submit_job_result", data=data.model_dump())
+                    await self.post("/submit_job_result", data=data.model_dump())
                 except (httpx.HTTPError, ValidationError, ResponseNotJson) as e:
-                    raise ShutdownSignal(
-                        f"Failed to submit job {self.current_job_data.id}: {str(e)}"
-                    )
+                    raise ShutdownSignal(f"Failed to submit job {self.current_job_data.id}", e)
                 logger.info(f"Result of job {self.current_job_data.id} submitted to backend")
 
                 self.current_job_aborted = False
@@ -346,7 +321,7 @@ class Runner:
                     data.progress = self.current_job_data.progress
                 try:
                     heartbeat_resp = await self.post_validated(
-                        "heartbeat", HeartbeatResponse, data=data.model_dump()
+                        "/heartbeat", HeartbeatResponse, data=data.model_dump()
                     )
                 except (httpx.HTTPError, ValidationError, ResponseNotJson) as e:
                     # The heartbeat failed for some reason. We don't want the runner
@@ -354,10 +329,12 @@ class Runner:
                     if (time.time() - timestamp_of_last_heartbeat) < (
                         HEARTBEAT_TIMEOUT - HEARTBEAT_INTERVAL
                     ):
-                        logger.warning(f"Heartbeat failed: {str(e)}! Retrying in next iteration...")
+                        logger.warning(
+                            f"Heartbeat failed: {type(e).__name__}: '{str(e)}'! Retrying in next iteration..."
+                        )
                         continue
                     else:
-                        raise ShutdownSignal(f"Heartbeat kept failing for too long: {str(e)}")
+                        raise ShutdownSignal(f"Heartbeat kept failing for too long", e)
                 timestamp_of_last_heartbeat = time.time()
 
                 if self.current_job_data is None:
@@ -380,10 +357,15 @@ class Runner:
         else:
             cafile = certifi.where()
         ctx = ssl.create_default_context(cafile=cafile)
+        headers = {
+            "Authorization": f"Bearer {self.config.backend_settings.auth_token.get_secret_value()}"
+        }
         # Store the session so we can use it in other methods. Note that
         # we only exit this context manager when the runner is shutting down,
         # at which point we're not making any more requests over this session.
-        async with httpx.AsyncClient(verify=ctx) as self.session:
+        async with httpx.AsyncClient(
+            verify=ctx, headers=headers, base_url=self.backend_url
+        ) as self.session:
             # create the two main tasks in a TaskGroup. This has the benefit that if any of these tasks raise an exception all tasks end and not just that one
             # all of these tasks need to stay active for the runner to work, if any of them crashes we want the runner to be restarted by docker or whatever to get to a working state again
             # otherwise the runner would just stay in a broken state forever until restarted manually
