@@ -24,7 +24,7 @@ class WhisperSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model_cache_dir: DirectoryPath = Field(
         default=user_cache_path(appname=program_name, ensure_exists=True),
-        description="The directory in which whisper should download/read models from",
+        description="The directory in which whisperx should download/read models from",
         validate_default=True,
     )
     hf_token: SecretStr = Field(
@@ -32,12 +32,12 @@ class WhisperSettings(BaseModel):
     )
     torch_device: str = Field(
         default="cuda",
-        description="On which torch device whisper should run",
+        description="On which torch device whisperx should run",
         validate_default=True,
     )
     compute_type: ComputeTypeEnum = Field(
         default=ComputeTypeEnum.FLOAT16,
-        description="The compute type used by the whisper model. Change this to int8 if you want to run whisper on CPU",
+        description="The compute type used by the whisper model. One of 'float16', 'float32', 'int8'. Set this to int8 if you want to run whisper on CPU",
         validate_default=True,
     )
     batch_size: int = Field(
