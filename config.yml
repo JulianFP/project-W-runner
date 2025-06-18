@@ -1,7 +1,7 @@
 runner_attributes:
   name: "test runner"
 backend_settings:
-  url: http://localhost:8000
+  url: http://localhost:5000
   auth_token: <your runner token>
 whisper_settings:
   hf_token: <your huggingface token>
