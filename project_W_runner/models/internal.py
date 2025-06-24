@@ -1,5 +1,5 @@
 from httpx import HTTPError, Response
-from pydantic import BaseModel, Field, RootModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from .base import JobSettingsBase
 from .request_data import Transcript
@@ -19,7 +19,10 @@ class BackendError(HTTPError):
     This gets raised instead of httpx's exception to include the detail field that the backend may return
     """
 
+    status_code: int
+
     def __init__(self, response: Response) -> None:
+        self.status_code = response.status_code
         error_message = f"Backend responded with {response.status_code}, "
         if response.headers.get("Content-Type") == "application/json":
             json_response = response.json()
@@ -59,7 +62,3 @@ class JobData(BaseModel):
         default=None,
     )
     settings: JobSettingsBase | None = None
-
-
-class RunnerId(RootModel):
-    root: int

@@ -52,7 +52,7 @@ def prefetch_models_as_configured(whisper_settings: WhisperSettings):
     if whisper_settings.model_prefetching != ModelPrefetchingEnum.NONE:
         logger.info("Starting prefetching of whisper and vad models now. Please wait...")
         for model in JobModelEnum:
-            logger.info(f"Loading the whisper's '{model}' model now...")
+            logger.info(f"Loading whisper's '{model}' model now...")
             loaded_model = whisperx.load_model(
                 model,
                 whisper_settings.torch_device,
@@ -60,7 +60,7 @@ def prefetch_models_as_configured(whisper_settings: WhisperSettings):
                 compute_type=whisper_settings.compute_type,
             )
             model_cleanup(loaded_model)
-            logger.info(f"Loading of the whisper's '{model}' model was successful")
+            logger.info(f"Loading of whisper's '{model}' model was successful")
         logger.info("All whisper and vad models fetched successfully")
     else:
         logger.warning(
