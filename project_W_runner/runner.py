@@ -14,7 +14,13 @@ from project_W_runner.models.base import JobSettingsBase
 
 from ._version import __version__, __version_tuple__
 from .logger import get_logger
-from .models.internal import JobData, ResponseNotJson, RunnerId, ShutdownSignal
+from .models.internal import (
+    BackendError,
+    JobData,
+    ResponseNotJson,
+    RunnerId,
+    ShutdownSignal,
+)
 from .models.request_data import (
     HeartbeatRequest,
     RunnerRegisterRequest,
@@ -71,22 +77,17 @@ class Runner:
         Get the binary data of the audio file from api/runners/retrieve_job_audio route
         """
         response = await self.session.post("/retrieve_job_audio")
-        if response.status_code >= 400:
-            if response.headers.get("Content-Type") == "application/json" and (
-                detail := (response.json()).get("detail")
-            ):
-                raise ShutdownSignal(f"Error while trying to retrieve job audio: {detail}")
-            else:
-                raise ShutdownSignal(
-                    f"Error while trying to retrieve job audio: Returned status code {response.status_code} without attached detail"
-                )
+        try:
+            response.raise_for_status()
+        except httpx.HTTPError:
+            raise ShutdownSignal("Error while trying to retrieve job audio", BackendError(response))
         base_mime_type = response.headers.get("Content-Type").split("/")[0].strip()
         if base_mime_type in ["audio", "video"]:
             async for chunk in response.aiter_bytes(10240):
                 job_tmp_file.write(chunk)
         else:
             raise ShutdownSignal(
-                f"Error while trying to retrieve job audio: The content type of the response is neither audio nor video"
+                "Error while trying to retrieve job audio: The content type of the response is neither audio nor video"
             )
 
     async def get(
@@ -102,7 +103,10 @@ class Runner:
             route,
             params=params,
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPError:
+            raise BackendError(response)
         if response.headers.get("Content-Type") == "application/json":
             return response.json()
         else:
@@ -125,7 +129,10 @@ class Runner:
             json=data,
             params=params,
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPError:
+            raise BackendError(response)
         if response.headers.get("Content-Type") == "application/json":
             return response.json()
         else:
@@ -178,7 +185,7 @@ class Runner:
                 ).model_dump(),
             )
         except (httpx.HTTPError, ValidationError, ResponseNotJson) as e:
-            raise ShutdownSignal(f"Failed to register runner", e)
+            raise ShutdownSignal("Failed to register runner", e)
         self.id = runner_id.root
         logger.info(f"Runner registered, this runner has ID {self.id}")
 
@@ -191,7 +198,7 @@ class Runner:
             await self.post("/unregister")
         except (httpx.HTTPError, ValidationError, ResponseNotJson) as e:
             # don't throw ShutdownSignal here because unregister is only called when the runner is already shutting down
-            logger.warning(f"Failed to unregister runner", e)
+            logger.warning(f"Failed to unregister runner: {str(e)}")
             return
         logger.info("Runner unregistered")
 
@@ -256,7 +263,7 @@ class Runner:
                             "/retrieve_job_info", RunnerJobInfoResponse
                         )
                     except (httpx.HTTPError, ValidationError, ResponseNotJson) as e:
-                        raise ShutdownSignal(f"Failed to retrieve job info", e)
+                        raise ShutdownSignal("Failed to retrieve job info", e)
                     await self.get_job_audio(job_tmp_file)
 
                     self.current_job_data = JobData(
@@ -334,7 +341,7 @@ class Runner:
                         )
                         continue
                     else:
-                        raise ShutdownSignal(f"Heartbeat kept failing for too long", e)
+                        raise ShutdownSignal("Heartbeat kept failing for too long", e)
                 timestamp_of_last_heartbeat = time.time()
 
                 if self.current_job_data is None:
