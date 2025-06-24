@@ -52,16 +52,11 @@ def main(custom_config_path: Path | None, dummy: bool):
 
     else:
         logger.info("Trying to import WhisperX code now...")
-        from .utils_whisperx import prefetch_all_models, transcribe
+        from .utils_whisperx import prefetch_models_as_configured, transcribe
 
         logger.info("Import successful")
 
-        if config.skip_model_prefetch:
-            logger.warning(
-                "Skipping model prefetching, this might lead to failing jobs due to not being able to fetch models and significantly higher job processing times!"
-            )
-        else:
-            prefetch_all_models(config.whisper_settings)
+        prefetch_models_as_configured(config.whisper_settings)
 
     runner = Runner(
         transcribe_function=transcribe,

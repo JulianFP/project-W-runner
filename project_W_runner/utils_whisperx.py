@@ -15,7 +15,7 @@ from .models.base import (
     JobSettingsBase,
     supported_alignment_languages,
 )
-from .models.settings import WhisperSettings
+from .models.settings import ModelPrefetchingEnum, WhisperSettings
 
 logger = get_logger("project-W-runner")
 
@@ -26,42 +26,66 @@ def model_cleanup(model):
     del model
 
 
-def prefetch_all_models(whisper_settings: WhisperSettings):
+def prefetch_models_as_configured(whisper_settings: WhisperSettings):
     """
     Should be called at runner startup before runner registers to backend
     """
     # prefetch diarization model (and check access to it)
     # do this first because this is most likely to fail (because of the required hf token), and the other downloads take a while
-    logger.info("Starting prefetching of diarization models now. Please wait...")
-    diarize_model = diarize.DiarizationPipeline(
-        device=whisper_settings.torch_device,
-        use_auth_token=whisper_settings.hf_token.get_secret_value(),
-    )
-    model_cleanup(diarize_model)
-    logger.info("All diarization models fetched successfully")
+    if (
+        whisper_settings.model_prefetching == ModelPrefetchingEnum.ALL
+        or whisper_settings.model_prefetching == ModelPrefetchingEnum.WITHOUT_ALIGNMENT
+    ):
+        logger.info("Starting prefetching of diarization models now. Please wait...")
+        diarize_model = diarize.DiarizationPipeline(
+            device=whisper_settings.torch_device,
+            use_auth_token=whisper_settings.hf_token.get_secret_value(),
+        )
+        model_cleanup(diarize_model)
+        logger.info("All diarization models fetched successfully")
+    else:
+        logger.warning(
+            "Skipping prefetching of diarization models, this might lead to failing jobs due to not being able to fetch these models and significantly higher job processing times!"
+        )
 
     # prefetch all whisper models
-    logger.info("Starting prefetching of whisper models now. Please wait...")
-    for model in JobModelEnum:
-        loaded_model = whisperx.load_model(
-            model,
-            whisper_settings.torch_device,
-            download_root=str(whisper_settings.model_cache_dir),
-            compute_type=whisper_settings.compute_type,
+    if whisper_settings.model_prefetching != ModelPrefetchingEnum.NONE:
+        logger.info("Starting prefetching of whisper and vad models now. Please wait...")
+        for model in JobModelEnum:
+            logger.info(f"Loading the whisper's '{model}' model now...")
+            loaded_model = whisperx.load_model(
+                model,
+                whisper_settings.torch_device,
+                download_root=str(whisper_settings.model_cache_dir),
+                compute_type=whisper_settings.compute_type,
+            )
+            model_cleanup(loaded_model)
+            logger.info(f"Loading of the whisper's '{model}' model was successful")
+        logger.info("All whisper and vad models fetched successfully")
+    else:
+        logger.warning(
+            "Skipping prefetching of whisper and vad models, this might lead to failing jobs due to not being able to fetch these models and significantly higher job processing times!"
         )
-        model_cleanup(loaded_model)
-    logger.info("All whisper models fetched successfully")
 
     # prefetch all alignment models
-    logger.info("Starting prefetching of alignment models now. Please wait...")
-    for language in supported_alignment_languages:
-        loaded_model = whisperx.load_align_model(
-            language_code=language,
-            device=whisper_settings.torch_device,
-            model_dir=str(whisper_settings.model_cache_dir),
+    if whisper_settings.model_prefetching == ModelPrefetchingEnum.ALL:
+        logger.info("Starting prefetching of alignment models now. Please wait...")
+        for language in supported_alignment_languages:
+            logger.info(f"Loading the alignment model for the language '{language}' now...")
+            loaded_model = whisperx.load_align_model(
+                language_code=language,
+                device=whisper_settings.torch_device,
+                model_dir=str(whisper_settings.model_cache_dir),
+            )
+            model_cleanup(loaded_model)
+            logger.info(
+                f"Loading of the alignment model for the language '{language}' was successful"
+            )
+        logger.info("All alignment models fetched successfully")
+    else:
+        logger.warning(
+            "Skipping prefetching of alignment models, this might lead to failing jobs due to not being able to fetch these models and significantly higher job processing times!"
         )
-        model_cleanup(loaded_model)
-    logger.info("All alignment models fetched successfully")
 
 
 def transcribe(
@@ -122,7 +146,6 @@ def transcribe(
         job_settings.model,
         whisper_settings.torch_device,
         download_root=str(whisper_settings.model_cache_dir),
-        local_files_only=True,
         compute_type=whisper_settings.compute_type,
         task=job_settings.task,
         language=job_settings.language,
