@@ -14,14 +14,23 @@ from project_W_runner.models.base import JobSettingsBase
 
 from ._version import __version__, __version_tuple__
 from .logger import get_logger
-from .models.internal import JobData, ResponseNotJson, RunnerId, ShutdownSignal
+from .models.internal import (
+    BackendError,
+    JobData,
+    ResponseNotJson,
+    ShutdownSignal,
+)
 from .models.request_data import (
     HeartbeatRequest,
     RunnerRegisterRequest,
     RunnerSubmitResultRequest,
     Transcript,
 )
-from .models.response_data import HeartbeatResponse, RunnerJobInfoResponse
+from .models.response_data import (
+    HeartbeatResponse,
+    RegisteredResponse,
+    RunnerJobInfoResponse,
+)
 from .models.settings import Settings, WhisperSettings
 
 logger = get_logger("project-W-runner")
@@ -43,6 +52,7 @@ class Runner:
     backend_url: str
     source_code_url = "https://github.com/JulianFP/project-W-runner"
     id: int | None
+    session_token: str | None
     current_job_data: JobData | None  # protected by the following cond element
     current_job_data_cond: asyncio.Condition
     current_job_aborted: bool
@@ -60,6 +70,8 @@ class Runner:
         if self.backend_url[-1] != "/":
             self.backend_url += "/"
         self.backend_url += "api/runners"
+        self.id = None
+        self.session_token = None
         self.command_thread_to_exit = False
         self.current_job_data = None
         self.current_job_data_cond = asyncio.Condition()
@@ -70,23 +82,20 @@ class Runner:
         """
         Get the binary data of the audio file from api/runners/retrieve_job_audio route
         """
-        response = await self.session.post("/retrieve_job_audio")
-        if response.status_code >= 400:
-            if response.headers.get("Content-Type") == "application/json" and (
-                detail := (response.json()).get("detail")
-            ):
-                raise ShutdownSignal(f"Error while trying to retrieve job audio: {detail}")
-            else:
-                raise ShutdownSignal(
-                    f"Error while trying to retrieve job audio: Returned status code {response.status_code} without attached detail"
-                )
+        response = await self.session.post(
+            "/retrieve_job_audio", params={"session_token": self.session_token}
+        )
+        try:
+            response.raise_for_status()
+        except httpx.HTTPError:
+            raise ShutdownSignal("Error while trying to retrieve job audio", BackendError(response))
         base_mime_type = response.headers.get("Content-Type").split("/")[0].strip()
         if base_mime_type in ["audio", "video"]:
             async for chunk in response.aiter_bytes(10240):
                 job_tmp_file.write(chunk)
         else:
             raise ShutdownSignal(
-                f"Error while trying to retrieve job audio: The content type of the response is neither audio nor video"
+                "Error while trying to retrieve job audio: The content type of the response is neither audio nor video"
             )
 
     async def get(
@@ -98,11 +107,18 @@ class Runner:
         Send a GET request to the server.
         Optionally accepts `params` (a dictionary of query parameters).
         """
+        if self.session_token:
+            if params is None:
+                params = {}
+            params["session_token"] = self.session_token
         response = await self.session.get(
             route,
             params=params,
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPError:
+            raise BackendError(response)
         if response.headers.get("Content-Type") == "application/json":
             return response.json()
         else:
@@ -120,12 +136,19 @@ class Runner:
         Send a POST request to the server.
         Optionally accepts `data` (a dictionary that gets send as json in the body) and/or `params` (a dictionary of query parameters).
         """
+        if self.session_token:
+            if params is None:
+                params = {}
+            params["session_token"] = self.session_token
         response = await self.session.post(
             route,
             json=data,
             params=params,
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPError:
+            raise BackendError(response)
         if response.headers.get("Content-Type") == "application/json":
             return response.json()
         else:
@@ -158,7 +181,7 @@ class Runner:
         else:
             return return_model(**{"root": response})  # expects Pydantic RootModel
 
-    async def register(self):
+    async def register(self, unregister_if_online: bool = True):
         """
         Register the runner with the server.
         This should be called before the main loop or
@@ -166,9 +189,9 @@ class Runner:
         """
 
         try:
-            runner_id = await self.post_validated(
+            registered_response = await self.post_validated(
                 "/register",
-                RunnerId,
+                RegisteredResponse,
                 data=RunnerRegisterRequest(
                     name=self.config.runner_attributes.name,
                     priority=self.config.runner_attributes.priority,
@@ -177,10 +200,21 @@ class Runner:
                     source_code_url=self.source_code_url,
                 ).model_dump(),
             )
+            self.id = registered_response.id
+            self.session_token = registered_response.session_token
+            logger.info(f"Runner registered, this runner has ID {self.id}")
+        except BackendError as e:
+            # if the runner was already online for some reason then try to unregister before crashing!
+            if unregister_if_online and e.status_code == 403:
+                logger.warning(
+                    "Runner was already registered as online, trying to unregister and re-register again..."
+                )
+                await self.unregister()
+                await self.register(False)
+            else:
+                raise ShutdownSignal("Failed to register runner", e)
         except (httpx.HTTPError, ValidationError, ResponseNotJson) as e:
-            raise ShutdownSignal(f"Failed to register runner", e)
-        self.id = runner_id.root
-        logger.info(f"Runner registered, this runner has ID {self.id}")
+            raise ShutdownSignal("Failed to register runner", e)
 
     async def unregister(self):
         """
@@ -189,9 +223,10 @@ class Runner:
         """
         try:
             await self.post("/unregister")
+            self.session_token = None
         except (httpx.HTTPError, ValidationError, ResponseNotJson) as e:
             # don't throw ShutdownSignal here because unregister is only called when the runner is already shutting down
-            logger.warning(f"Failed to unregister runner", e)
+            logger.warning(f"Failed to unregister runner: {str(e)}")
             return
         logger.info("Runner unregistered")
 
@@ -256,7 +291,7 @@ class Runner:
                             "/retrieve_job_info", RunnerJobInfoResponse
                         )
                     except (httpx.HTTPError, ValidationError, ResponseNotJson) as e:
-                        raise ShutdownSignal(f"Failed to retrieve job info", e)
+                        raise ShutdownSignal("Failed to retrieve job info", e)
                     await self.get_job_audio(job_tmp_file)
 
                     self.current_job_data = JobData(
@@ -334,7 +369,7 @@ class Runner:
                         )
                         continue
                     else:
-                        raise ShutdownSignal(f"Heartbeat kept failing for too long", e)
+                        raise ShutdownSignal("Heartbeat kept failing for too long", e)
                 timestamp_of_last_heartbeat = time.time()
 
                 if self.current_job_data is None:
