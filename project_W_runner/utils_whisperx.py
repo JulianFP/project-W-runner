@@ -97,18 +97,17 @@ class ProgressCallbackClass:
         self.current_step = 1
         self.steps = steps
         self.__progress_callback = progress_callback
+        self.progress_callback(0.0)
 
     def progress_callback(self, progress: float):
-        # we assume that preparations is instant,
-        # that transcription takes about as long as alignment+diarization+output writing,
-        # and that alignment,diarization and output writing take the same amount of time
+        # we assume that preparations and output writing take 1 percent of the total time,
+        # and that diarization, alignment and diarization each take the same amount of time
         if self.current_step < 2:
-            progress = 0.0
-        elif self.current_step == 2:
-            progress = progress * (float(self.current_step + 1) / (self.steps + 1))
+            progress *= 0.01
+        elif self.current_step == self.steps:
+            progress = 99.0 + 0.01 * progress
         else:
-            old_progress = 100.0 * (3.0 / (self.steps + 1))
-            progress = old_progress + progress * (float(self.current_step - 2) / (self.steps + 1))
+            progress = 1.0 + 0.98 * (self.current_step - 1) / (self.steps - 2) * progress
         logger.info(f"Progress: {progress}")
         self.__progress_callback(progress)
 
@@ -172,7 +171,6 @@ def transcribe(
 
     utils.ResultWriter.__call__ = new_result_writer_call
 
-    # preperations
     if (increment := job_settings.asr_settings.temperature_increment_on_fallback) is not None:
         temperatures = tuple(
             np.arange(job_settings.asr_settings.temperature, 1.0 + 1e-6, increment)
@@ -181,6 +179,10 @@ def transcribe(
         temperatures = [job_settings.asr_settings.temperature]
     vad_options = job_settings.vad_settings.model_dump()
     vad_options.pop("chunk_size")
+
+    # transcription
+    pc.step_increment()
+    logger.info(f"Running job processing step {pc.current_step}/{steps}: Whisper Transcription...")
     whisperx_model = whisperx.load_model(
         job_settings.model,
         whisper_settings.torch_device,
@@ -204,10 +206,6 @@ def transcribe(
         vad_options=vad_options,
     )
     audio = whisperx.load_audio(audio_file)
-
-    # transcription
-    pc.step_increment()
-    logger.info(f"Running job processing step {pc.current_step}/{steps}: Whisper Transcription...")
     result = whisperx_model.transcribe(
         audio,
         batch_size=whisper_settings.batch_size,
@@ -215,7 +213,6 @@ def transcribe(
         print_progress=True,
     )
     model_cleanup(whisperx_model)
-
     # new_detect_language should already handle problems with language detection before transcription. This just ensures that the language is definitely not None
     used_language = job_settings.language or result.get("language") or "en"
 
