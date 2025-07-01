@@ -1,8 +1,15 @@
-FROM python:3.12-slim
+#bullseye required for
+FROM python:3.12-slim-bullseye
+
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg git wget
+
+RUN wget https://developer.download.nvidia.com/compute/cuda/repos/debian11/x86_64/cuda-keyring_1.1-1_all.deb
+
+RUN dpkg -i cuda-keyring_1.1-1_all.deb
+
+RUN apt-get update && apt-get install -y --no-install-recommends libcudnn8 libcudnn8-dev
 
 WORKDIR /app
-
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg git
 
 # install whisper first, as it's a very large dependency (multiple GBs of data) which
 # we don't want to re-download every time we change the code.
