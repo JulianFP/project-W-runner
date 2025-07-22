@@ -101,13 +101,17 @@ class ProgressCallbackClass:
 
     def progress_callback(self, progress: float):
         # we assume that preparations and output writing take 1 percent of the total time,
-        # and that diarization, alignment and diarization each take the same amount of time
+        # and that transcription, alignment and diarization each take the same amount of time
         if self.current_step < 2:
             progress *= 0.01
         elif self.current_step == self.steps:
             progress = 99.0 + 0.01 * progress
         else:
-            progress = 1.0 + 0.98 * (self.current_step - 1) / (self.steps - 2) * progress
+            progress = (
+                1.0
+                + ((self.current_step - 2) * 98.0) / (self.steps - 2)
+                + 0.98 / (self.steps - 2) * progress
+            )
         logger.info(f"Progress: {progress}")
         self.__progress_callback(progress)
 
@@ -143,7 +147,8 @@ def transcribe(
     def intercept_stdout(out: str):
         if out.startswith("Progress: ") and out.endswith("%..."):
             progress = out.removeprefix("Progress: ").removesuffix("%...").strip()
-            pc.progress_callback(float(progress))
+            # we start with 10% of this step since we assume that model loading took up the first 10% of the time
+            pc.progress_callback(10.0 + 0.9 * float(progress))
         elif out.startswith("Detected language: ") and out.endswith(" in first 30s of audio..."):
             detected_language = out.removeprefix("Detected language: ").split(" ")[0].strip()
             if job_settings.language is None and job_settings.alignment is not None:
@@ -205,7 +210,9 @@ def transcribe(
         },
         vad_options=vad_options,
     )
+    pc.progress_callback(5.0)  # model loading complete
     audio = whisperx.load_audio(audio_file)
+    pc.progress_callback(10.0)  # audio loading complete
     result = whisperx_model.transcribe(
         audio,
         batch_size=whisper_settings.batch_size,
@@ -225,6 +232,7 @@ def transcribe(
             device=whisper_settings.torch_device,
             model_dir=str(whisper_settings.model_cache_dir),
         )
+        pc.progress_callback(10.0)  # model loading complete
         result = whisperx.align(
             result["segments"],
             align_model,
@@ -233,7 +241,8 @@ def transcribe(
             whisper_settings.torch_device,
             return_char_alignments=job_settings.alignment.return_char_alignments,
             interpolate_method=job_settings.alignment.interpolate_method,
-            print_progress=True,
+            # alignment progress reporting in whisperx currently seems broken, it just immediately jumps to 100%
+            # print_progress=True,
         )
         model_cleanup(align_model)
 
@@ -245,6 +254,7 @@ def transcribe(
             device=whisper_settings.torch_device,
             use_auth_token=whisper_settings.hf_token.get_secret_value(),
         )
+        pc.progress_callback(10.0)  # model loading complete
         diarize_segments = diarize_model(
             audio,
             min_speakers=job_settings.diarization.min_speakers,
