@@ -88,6 +88,38 @@ def prefetch_models_as_configured(whisper_settings: WhisperSettings):
         )
 
 
+class ProgressCallbackClass:
+    current_step: int
+    steps: int
+    __progress_callback: Callable[[float], None]
+
+    def __init__(self, steps: int, progress_callback: Callable[[float], None]) -> None:
+        self.current_step = 1
+        self.steps = steps
+        self.__progress_callback = progress_callback
+        self.progress_callback(0.0)
+
+    def progress_callback(self, progress: float):
+        # we assume that preparations and output writing take 1 percent of the total time,
+        # and that transcription, alignment and diarization each take the same amount of time
+        if self.current_step < 2:
+            progress *= 0.01
+        elif self.current_step == self.steps:
+            progress = 99.0 + 0.01 * progress
+        else:
+            progress = (
+                1.0
+                + ((self.current_step - 2) * 98.0) / (self.steps - 2)
+                + 0.98 / (self.steps - 2) * progress
+            )
+        logger.info(f"Progress: {progress}")
+        self.__progress_callback(progress)
+
+    def step_increment(self):
+        self.progress_callback(100.0)
+        self.current_step += 1
+
+
 def transcribe(
     audio_file: str,
     job_settings: JobSettingsBase,
@@ -101,11 +133,22 @@ def transcribe(
     used as the device for the model.
     """
 
+    # calculate amount of step for logging and progress reporting
+    steps = 3  # preparation, transcription and output writing is always done
+    if job_settings.alignment is not None:
+        steps += 1
+    if job_settings.diarization is not None:
+        steps += 1
+
+    pc = ProgressCallbackClass(steps, progress_callback)
+    logger.info(f"Running job processing step {pc.current_step}/{steps}: Preparations...")
+
     # overwrite the print method inside the asr and alignment modules of whisperx which contain progress printing and detected language
     def intercept_stdout(out: str):
         if out.startswith("Progress: ") and out.endswith("%..."):
             progress = out.removeprefix("Progress: ").removesuffix("%...").strip()
-            progress_callback(float(progress))
+            # we start with 10% of this step since we assume that model loading took up the first 10% of the time
+            pc.progress_callback(10.0 + 0.9 * float(progress))
         elif out.startswith("Detected language: ") and out.endswith(" in first 30s of audio..."):
             detected_language = out.removeprefix("Detected language: ").split(" ")[0].strip()
             if job_settings.language is None and job_settings.alignment is not None:
@@ -117,7 +160,7 @@ def transcribe(
                     raise Exception(
                         f"The detected language '{detected_language}' is not supported for alignment. Either select a different language explicitly or disable alignment!"
                     )
-        logger.info(f"WhisperX: {out}")
+            logger.info(f"WhisperX: {out}")
 
     setattr(asr, "print", intercept_stdout)
     setattr(alignment, "print", intercept_stdout)
@@ -133,7 +176,6 @@ def transcribe(
 
     utils.ResultWriter.__call__ = new_result_writer_call
 
-    # preperations
     if (increment := job_settings.asr_settings.temperature_increment_on_fallback) is not None:
         temperatures = tuple(
             np.arange(job_settings.asr_settings.temperature, 1.0 + 1e-6, increment)
@@ -142,6 +184,10 @@ def transcribe(
         temperatures = [job_settings.asr_settings.temperature]
     vad_options = job_settings.vad_settings.model_dump()
     vad_options.pop("chunk_size")
+
+    # transcription
+    pc.step_increment()
+    logger.info(f"Running job processing step {pc.current_step}/{steps}: Whisper Transcription...")
     whisperx_model = whisperx.load_model(
         job_settings.model,
         whisper_settings.torch_device,
@@ -164,30 +210,29 @@ def transcribe(
         },
         vad_options=vad_options,
     )
+    pc.progress_callback(5.0)  # model loading complete
     audio = whisperx.load_audio(audio_file)
-
-    progress_callback(0.0)
-
-    # transcription
+    pc.progress_callback(10.0)  # audio loading complete
     result = whisperx_model.transcribe(
         audio,
         batch_size=whisper_settings.batch_size,
         chunk_size=job_settings.vad_settings.chunk_size,
         print_progress=True,
-        combined_progress=True,
     )
     model_cleanup(whisperx_model)
-
     # new_detect_language should already handle problems with language detection before transcription. This just ensures that the language is definitely not None
     used_language = job_settings.language or result.get("language") or "en"
 
     # alignment
     if job_settings.alignment is not None:
+        pc.step_increment()
+        logger.info(f"Running job processing step {pc.current_step}/{steps}: Alignment...")
         align_model, align_metadata = whisperx.load_align_model(
             language_code=used_language,
             device=whisper_settings.torch_device,
             model_dir=str(whisper_settings.model_cache_dir),
         )
+        pc.progress_callback(10.0)  # model loading complete
         result = whisperx.align(
             result["segments"],
             align_model,
@@ -196,17 +241,20 @@ def transcribe(
             whisper_settings.torch_device,
             return_char_alignments=job_settings.alignment.return_char_alignments,
             interpolate_method=job_settings.alignment.interpolate_method,
-            print_progress=True,
-            combined_progress=True,
+            # alignment progress reporting in whisperx currently seems broken, it just immediately jumps to 100%
+            # print_progress=True,
         )
         model_cleanup(align_model)
 
     # diarization
     if job_settings.diarization is not None:
+        pc.step_increment()
+        logger.info(f"Running job processing step {pc.current_step}/{steps}: Diarization...")
         diarize_model = diarize.DiarizationPipeline(
             device=whisper_settings.torch_device,
             use_auth_token=whisper_settings.hf_token.get_secret_value(),
         )
+        pc.progress_callback(10.0)  # model loading complete
         diarize_segments = diarize_model(
             audio,
             min_speakers=job_settings.diarization.min_speakers,
@@ -216,6 +264,8 @@ def transcribe(
         model_cleanup(diarize_model)
 
     # output writing
+    pc.step_increment()
+    logger.info(f"Running job processing step {pc.current_step}/{steps}: Output writing...")
     result = dict(result)
     result["language"] = used_language
     writer = utils.get_writer("all", ".")
@@ -228,6 +278,7 @@ def transcribe(
     writer(result, "file", options)
 
     # Just in case the progress_callback was not called with 100.0, do that now.
-    progress_callback(100.0)
+    pc.progress_callback(100.0)
+    logger.info(f"Job processing finished")
 
     return in_memory_files

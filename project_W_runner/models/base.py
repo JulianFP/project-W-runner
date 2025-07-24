@@ -188,13 +188,13 @@ class TaskEnum(str, Enum):
 
 class VadSettings(BaseModel):
     vad_onset: float = Field(
-        ge=0.0,
-        le=1.0,
+        gt=0.0,
+        lt=1.0,
         default=0.5,
     )
     vad_offset: float = Field(
-        ge=0.0,
-        le=1.0,
+        gt=0.0,
+        lt=1.0,
         default=0.363,
     )
     chunk_size: int = Field(ge=1, le=30, default=30)
