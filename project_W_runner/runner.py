@@ -12,7 +12,7 @@ from pydantic import ValidationError
 
 from project_W_runner.models.base import JobSettingsBase
 
-from ._version import __version__, __version_tuple__
+from ._version import __git_hash__, __version__
 from .logger import get_logger
 from .models.internal import (
     BackendError,
@@ -196,7 +196,7 @@ class Runner:
                     name=self.config.runner_attributes.name,
                     priority=self.config.runner_attributes.priority,
                     version=__version__,
-                    git_hash=str(__version_tuple__[-1]).split(".")[0].removeprefix("g"),
+                    git_hash=__git_hash__.removeprefix("g"),
                     source_code_url=self.source_code_url,
                 ).model_dump(),
             )

@@ -17,6 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          path: runner
           fetch-depth: 0
       - id: meta
         uses: docker/metadata-action@v5
@@ -46,6 +47,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
+          file: ./runner/Dockerfile
           #platforms: linux/amd64,linux/arm64 #currently only compatible with x86_64 due to cuda dependencies
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
@@ -55,7 +57,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile.dummy
+          file: ./runner/Dockerfile.dummy
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta-dummy.outputs.tags }}
