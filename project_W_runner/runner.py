@@ -12,7 +12,7 @@ from pydantic import ValidationError
 
 from project_W_runner.models.base import JobSettingsBase
 
-from ._version import __git_hash__, __version__
+from ._version import __version__
 from .logger import get_logger
 from .models.internal import (
     BackendError,
@@ -49,6 +49,7 @@ class Runner:
         [str, JobSettingsBase, WhisperSettings, Callable[[float], None]], dict[str, StringIO]
     ]
     config: Settings
+    git_hash: str
     backend_url: str
     source_code_url = "https://github.com/JulianFP/project-W-runner"
     id: int | None
@@ -63,9 +64,11 @@ class Runner:
         self,
         transcribe_function,
         config: Settings,
+        git_hash: str,
     ):
         self.transcribe = transcribe_function
         self.config = config
+        self.git_hash = git_hash
         self.backend_url = str(config.backend_settings.url)
         if self.backend_url[-1] != "/":
             self.backend_url += "/"
@@ -196,7 +199,7 @@ class Runner:
                     name=self.config.runner_attributes.name,
                     priority=self.config.runner_attributes.priority,
                     version=__version__,
-                    git_hash=__git_hash__.removeprefix("g"),
+                    git_hash=self.git_hash,
                     source_code_url=self.source_code_url,
                 ).model_dump(),
             )
