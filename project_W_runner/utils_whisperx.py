@@ -50,9 +50,7 @@ def prefetch_models_as_configured(whisper_settings: WhisperSettings):
 
     # prefetch all whisper models
     if whisper_settings.model_prefetching != ModelPrefetchingEnum.NONE:
-        logger.info(
-            "Starting prefetching of whisper and vad models now. Please wait..."
-        )
+        logger.info("Starting prefetching of whisper and vad models now. Please wait...")
         for model in JobModelEnum:
             logger.info(f"Loading whisper's '{model}' model now...")
             loaded_model = whisperx.load_model(
@@ -73,9 +71,7 @@ def prefetch_models_as_configured(whisper_settings: WhisperSettings):
     if whisper_settings.model_prefetching == ModelPrefetchingEnum.ALL:
         logger.info("Starting prefetching of alignment models now. Please wait...")
         for language in supported_alignment_languages:
-            logger.info(
-                f"Loading the alignment model for the language '{language}' now..."
-            )
+            logger.info(f"Loading the alignment model for the language '{language}' now...")
             loaded_model = whisperx.load_align_model(
                 language_code=language,
                 device=whisper_settings.torch_device,
@@ -145,9 +141,7 @@ def transcribe(
         steps += 1
 
     pc = ProgressCallbackClass(steps, progress_callback)
-    logger.info(
-        f"Running job processing step {pc.current_step}/{steps}: Preparations..."
-    )
+    logger.info(f"Running job processing step {pc.current_step}/{steps}: Preparations...")
 
     # overwrite the print method inside the asr and alignment modules of whisperx which contain progress printing and detected language
     def intercept_stdout(out: str):
@@ -155,12 +149,8 @@ def transcribe(
             progress = out.removeprefix("Progress: ").removesuffix("%...").strip()
             # we start with 10% of this step since we assume that model loading took up the first 10% of the time
             pc.progress_callback(10.0 + 0.9 * float(progress))
-        elif out.startswith("Detected language: ") and out.endswith(
-            " in first 30s of audio..."
-        ):
-            detected_language = (
-                out.removeprefix("Detected language: ").split(" ")[0].strip()
-            )
+        elif out.startswith("Detected language: ") and out.endswith(" in first 30s of audio..."):
+            detected_language = out.removeprefix("Detected language: ").split(" ")[0].strip()
             if job_settings.language is None and job_settings.alignment is not None:
                 if detected_language is None:
                     raise Exception(
@@ -186,9 +176,7 @@ def transcribe(
 
     utils.ResultWriter.__call__ = new_result_writer_call
 
-    if (
-        increment := job_settings.asr_settings.temperature_increment_on_fallback
-    ) is not None:
+    if (increment := job_settings.asr_settings.temperature_increment_on_fallback) is not None:
         temperatures = tuple(
             np.arange(job_settings.asr_settings.temperature, 1.0 + 1e-6, increment)
         )
@@ -199,9 +187,7 @@ def transcribe(
 
     # transcription
     pc.step_increment()
-    logger.info(
-        f"Running job processing step {pc.current_step}/{steps}: Whisper Transcription..."
-    )
+    logger.info(f"Running job processing step {pc.current_step}/{steps}: Whisper Transcription...")
     whisperx_model = whisperx.load_model(
         job_settings.model,
         whisper_settings.torch_device,
@@ -240,9 +226,7 @@ def transcribe(
     # alignment
     if job_settings.alignment is not None:
         pc.step_increment()
-        logger.info(
-            f"Running job processing step {pc.current_step}/{steps}: Alignment..."
-        )
+        logger.info(f"Running job processing step {pc.current_step}/{steps}: Alignment...")
         align_model, align_metadata = whisperx.load_align_model(
             language_code=used_language,
             device=whisper_settings.torch_device,
@@ -265,9 +249,7 @@ def transcribe(
     # diarization
     if job_settings.diarization is not None:
         pc.step_increment()
-        logger.info(
-            f"Running job processing step {pc.current_step}/{steps}: Diarization..."
-        )
+        logger.info(f"Running job processing step {pc.current_step}/{steps}: Diarization...")
         diarize_model = diarize.DiarizationPipeline(
             device=whisper_settings.torch_device,
             use_auth_token=whisper_settings.hf_token.get_secret_value(),
@@ -283,9 +265,7 @@ def transcribe(
 
     # output writing
     pc.step_increment()
-    logger.info(
-        f"Running job processing step {pc.current_step}/{steps}: Output writing..."
-    )
+    logger.info(f"Running job processing step {pc.current_step}/{steps}: Output writing...")
     result = dict(result)
     result["language"] = used_language
     writer = utils.get_writer("all", ".")

@@ -36,13 +36,7 @@ let
       check-python.enable = true;
       python-debug-statements.enable = true;
       ruff.enable = true;
-      ruff-format = {
-        enable = true;
-        args = [
-          "--line-length"
-          "100"
-        ];
-      };
+      ruff-format.enable = true;
       nixfmt-rfc-style.enable = true;
       cspell = {
         enable = true;

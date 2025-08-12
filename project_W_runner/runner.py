@@ -92,9 +92,7 @@ class Runner:
         try:
             response.raise_for_status()
         except httpx.HTTPError:
-            raise ShutdownSignal(
-                "Error while trying to retrieve job audio", BackendError(response)
-            )
+            raise ShutdownSignal("Error while trying to retrieve job audio", BackendError(response))
         base_mime_type = response.headers.get("Content-Type").split("/")[0].strip()
         if base_mime_type in ["audio", "video"]:
             async for chunk in response.aiter_bytes(10240):
@@ -236,9 +234,7 @@ class Runner:
             return
         logger.info("Runner unregistered")
 
-    def process_job(
-        self, job_data: JobData, job_tmp_file: _TemporaryFileWrapper
-    ) -> Transcript:
+    def process_job(self, job_data: JobData, job_tmp_file: _TemporaryFileWrapper) -> Transcript:
         """
         Processes the current job, using the Whisper python package.
         This needs to run in a thread since this executes a lot of blocking tasks
@@ -319,9 +315,7 @@ class Runner:
                 except ShutdownSignal as e:
                     if self.current_job_aborted:
                         self.current_job_data.error_msg = "job was aborted"
-                        logger.info(
-                            f"Job with ID {self.current_job_data.id} was aborted"
-                        )
+                        logger.info(f"Job with ID {self.current_job_data.id} was aborted")
                     else:
                         raise e
                 except Exception as e:
@@ -333,13 +327,9 @@ class Runner:
             # Submit the result to the server.
             async with self.current_job_data_cond:
                 if self.current_job_data.transcript is not None:
-                    data = RunnerSubmitResultRequest(
-                        transcript=self.current_job_data.transcript
-                    )
+                    data = RunnerSubmitResultRequest(transcript=self.current_job_data.transcript)
                 elif self.current_job_data.error_msg is not None:
-                    data = RunnerSubmitResultRequest(
-                        error_msg=self.current_job_data.error_msg
-                    )
+                    data = RunnerSubmitResultRequest(error_msg=self.current_job_data.error_msg)
                 else:
                     # Sanity check if somehow neither transcript nor error is set.
                     data = RunnerSubmitResultRequest(error_msg="Unknown runner error")
@@ -348,12 +338,8 @@ class Runner:
                 try:
                     await self.post("/submit_job_result", data=data.model_dump())
                 except (httpx.HTTPError, ValidationError, ResponseNotJson) as e:
-                    raise ShutdownSignal(
-                        f"Failed to submit job {self.current_job_data.id}", e
-                    )
-                logger.info(
-                    f"Result of job {self.current_job_data.id} submitted to backend"
-                )
+                    raise ShutdownSignal(f"Failed to submit job {self.current_job_data.id}", e)
+                logger.info(f"Result of job {self.current_job_data.id} submitted to backend")
 
                 self.current_job_aborted = False
                 self.current_job_data = None
@@ -429,9 +415,7 @@ class Runner:
                     tg.create_task(self.heartbeat_task())
                     tg.create_task(self.job_handler_task())
             except ExceptionGroup as e:
-                if len(e.exceptions) == 1 and isinstance(
-                    e.exceptions[0], ShutdownSignal
-                ):
+                if len(e.exceptions) == 1 and isinstance(e.exceptions[0], ShutdownSignal):
                     logger.fatal(f"Shutting down: {e.exceptions[0].reason}")
                 else:
                     raise e

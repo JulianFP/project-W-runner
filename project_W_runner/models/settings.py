@@ -94,12 +94,8 @@ class RunnerAttributes(BaseModel):
 
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    runner_attributes: RunnerAttributes = Field(
-        description="General attributes of this runner"
-    )
-    backend_settings: BackendSettings = Field(
-        description="How to connect to the Project-W Backend"
-    )
+    runner_attributes: RunnerAttributes = Field(description="General attributes of this runner")
+    backend_settings: BackendSettings = Field(description="How to connect to the Project-W Backend")
     whisper_settings: WhisperSettings = Field(
         description="Settings related to performing the actual transcription and running the whisper and other ML models",
     )
