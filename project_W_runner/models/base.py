@@ -46,7 +46,7 @@ class JobLangEnum(str, Enum):
     BASQUE = "eu"
     PERSIAN = "fa"
     FINNISH = "fi"
-    FAROESE = "fo"
+    FAROESE = "fo"  # codespell:ignore fo
     FRENCH = "fr"
     GALICIAN = "gl"
     GUJARATI = "gu"
@@ -107,7 +107,7 @@ class JobLangEnum(str, Enum):
     SWEDISH = "sv"
     SWAHILI = "sw"
     TAMIL = "ta"
-    TELUGU = "te"
+    TELUGU = "te"  # codespell:ignore te
     TAJIK = "tg"
     THAI = "th"
     TURKMEN = "tk"
@@ -261,7 +261,7 @@ supported_alignment_languages = [
     "vi",
     "ko",
     "ur",
-    "te",
+    "te",  # codespell:ignore te
     "hi",
     "ca",
     "ml",
