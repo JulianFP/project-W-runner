@@ -91,7 +91,7 @@ in
           ```
           RUNNER_TOKEN=<your runners token>
           ```
-          This file should be accessible by the user [user](${cfg_str}.user) and by this user only!
+          This file should be accessable by the user [user](${cfg_str}.user) and by this user only!
         '';
       };
     };

@@ -46,8 +46,7 @@ PydanticModel = TypeVar("PydanticModel", covariant=True)
 
 class Runner:
     transcribe: Callable[
-        [str, JobSettingsBase, WhisperSettings, Callable[[float], None]],
-        dict[str, StringIO],
+        [str, JobSettingsBase, WhisperSettings, Callable[[float], None]], dict[str, StringIO]
     ]
     config: Settings
     git_hash: str
