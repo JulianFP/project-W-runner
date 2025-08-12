@@ -15,7 +15,9 @@ def transcribe(
 ) -> dict[str, StringIO]:
     # do some sanity checking (since this is mainly for the CI and we want to catch as many errors as possible)
     if not os.path.exists(audio_file):
-        raise Exception("dummy transcribe checks: The provided audio file path doesn't exist")
+        raise Exception(
+            "dummy transcribe checks: The provided audio file path doesn't exist"
+        )
     if os.path.getsize(audio_file) == 0:
         raise Exception("dummy transcribe checks: The provided audio file is empty")
 
