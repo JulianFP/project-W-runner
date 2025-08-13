@@ -87,11 +87,11 @@ in
         default = null;
         example = "/run/secrets/secretFile";
         description = mdDoc ''
-          Path to file to load secrets from. All secrets should be written as environment variables (in NAME=VALUE declerations, one per line). Per default, RUNNER_TOKEN sets the runner token. The content of the file most likely should look like this:
+          Path to file to load secrets from. All secrets should be written as environment variables (in NAME=VALUE declarations, one per line). Per default, RUNNER_TOKEN sets the runner token. The content of the file most likely should look like this:
           ```
           RUNNER_TOKEN=<your runners token>
           ```
-          This file should be accessable by the user [user](${cfg_str}.user) and by this user only!
+          This file should be accessible by the user [user](${cfg_str}.user) and by this user only!
         '';
       };
     };

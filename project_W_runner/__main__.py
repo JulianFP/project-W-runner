@@ -1,10 +1,11 @@
 import asyncio
 import os
+import platform
 from pathlib import Path
 
 import click
 
-from ._version import __version__
+from ._version import __commit_id__, __version__
 from .config import load_config
 from .logger import get_logger
 from .runner import Runner
@@ -34,6 +35,13 @@ logger = get_logger("project-W-runner")
 )
 def main(custom_config_path: Path | None, dummy: bool):
     logger.info(f"Running application version {__version__}")
+    if __commit_id__ is None:
+        raise Exception(
+            "Couldn't read git hash from _version.py file. Make sure to install this package from a working git repository!"
+        )
+    git_hash = __commit_id__.removeprefix("g")
+    logger.info(f"Application was built from git hash {git_hash}")
+    logger.info(f"Python version: {platform.python_version()}")
 
     config = load_config([custom_config_path]) if custom_config_path else load_config()
 
@@ -61,6 +69,7 @@ def main(custom_config_path: Path | None, dummy: bool):
     runner = Runner(
         transcribe_function=transcribe,
         config=config,
+        git_hash=git_hash,
     )
     asyncio.run(runner.run())
 

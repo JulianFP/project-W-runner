@@ -4,7 +4,8 @@
 [build-system]
 requires = [
     "setuptools >=61",
-    "setuptools_scm @ git+https://github.com/JulianFP/setuptools-scm/@git_hash",
+    #we need larger than 9 to get PR https://github.com/pypa/setuptools-scm/pull/1154
+    "setuptools_scm == 9.1.1",
 ]
 build-backend = "setuptools.build_meta"
 
@@ -70,3 +71,6 @@ write_to = "project_W_runner/_version.py"
 testpaths = [
     "tests",
 ]
+
+[tool.ruff]
+line-length = 100

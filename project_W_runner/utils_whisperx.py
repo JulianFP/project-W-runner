@@ -279,6 +279,6 @@ def transcribe(
 
     # Just in case the progress_callback was not called with 100.0, do that now.
     pc.progress_callback(100.0)
-    logger.info(f"Job processing finished")
+    logger.info("Job processing finished")
 
     return in_memory_files

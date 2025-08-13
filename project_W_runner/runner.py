@@ -12,7 +12,7 @@ from pydantic import ValidationError
 
 from project_W_runner.models.base import JobSettingsBase
 
-from ._version import __git_hash__, __version__
+from ._version import __version__
 from .logger import get_logger
 from .models.internal import (
     BackendError,
@@ -49,6 +49,7 @@ class Runner:
         [str, JobSettingsBase, WhisperSettings, Callable[[float], None]], dict[str, StringIO]
     ]
     config: Settings
+    git_hash: str
     backend_url: str
     source_code_url = "https://github.com/JulianFP/project-W-runner"
     id: int | None
@@ -63,9 +64,11 @@ class Runner:
         self,
         transcribe_function,
         config: Settings,
+        git_hash: str,
     ):
         self.transcribe = transcribe_function
         self.config = config
+        self.git_hash = git_hash
         self.backend_url = str(config.backend_settings.url)
         if self.backend_url[-1] != "/":
             self.backend_url += "/"
@@ -123,7 +126,7 @@ class Runner:
             return response.json()
         else:
             raise ResponseNotJson(
-                f"The backend returned with content_type {response.headers.get("Content-Type")} on a get request on route {route} even though 'application/json' was expected"
+                f"The backend returned with content_type {response.headers.get('Content-Type')} on a get request on route {route} even though 'application/json' was expected"
             )
 
     async def post(
@@ -153,7 +156,7 @@ class Runner:
             return response.json()
         else:
             raise ResponseNotJson(
-                f"The backend returned with content_type {response.headers.get("Content-Type")} on a post request on route {route} even though 'application/json' was expected"
+                f"The backend returned with content_type {response.headers.get('Content-Type')} on a post request on route {route} even though 'application/json' was expected"
             )
 
     async def get_validated(
@@ -163,7 +166,7 @@ class Runner:
         params: dict | None = None,
     ) -> PydanticModel:
         response = await self.get(route, params)
-        if type(response) == dict:
+        if type(response) is dict:
             return return_model(**response)
         else:
             return return_model(**{"root": response})  # expects Pydantic RootModel
@@ -176,7 +179,7 @@ class Runner:
         params: dict | None = None,
     ) -> PydanticModel:
         response = await self.post(route, data, params)
-        if type(response) == dict:
+        if type(response) is dict:
             return return_model(**response)
         else:
             return return_model(**{"root": response})  # expects Pydantic RootModel
@@ -196,7 +199,7 @@ class Runner:
                     name=self.config.runner_attributes.name,
                     priority=self.config.runner_attributes.priority,
                     version=__version__,
-                    git_hash=__git_hash__.removeprefix("g"),
+                    git_hash=self.git_hash,
                     source_code_url=self.source_code_url,
                 ).model_dump(),
             )
@@ -236,11 +239,11 @@ class Runner:
         This needs to run in a thread since this executes a lot of blocking tasks
         The calling task needs to hold current_job_data_cond on behalf of this thread because asyncio synchronization primitives are not thread save!
         """
-        assert job_data.settings != None
+        assert job_data.settings is not None
 
         # For some silly reason python doesn't let you do assignments in a lambda.
         def progress_callback(progress: float):
-            assert self.current_job_data != None
+            assert self.current_job_data is not None
             self.current_job_data.progress = progress
             if self.command_thread_to_exit:
                 self.command_thread_to_exit = False
@@ -270,7 +273,7 @@ class Runner:
             self.command_thread_to_exit = True
 
     def abort_job(self):
-        if not self.current_job_aborted and self.current_job_data != None:
+        if not self.current_job_aborted and self.current_job_data is not None:
             logger.info("Received request to abort current job")
             self.current_job_aborted = True
             self.stop_processing()
@@ -283,7 +286,9 @@ class Runner:
         while True:
             with NamedTemporaryFile("wb", delete_on_close=False) as job_tmp_file:
                 async with self.current_job_data_cond:
-                    await self.current_job_data_cond.wait()  # waits for heartbeat_task to notify this task
+                    await (
+                        self.current_job_data_cond.wait()
+                    )  # waits for heartbeat_task to notify this task
 
                     # retrieve this new job
                     try:
