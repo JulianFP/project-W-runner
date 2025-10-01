@@ -31,7 +31,7 @@ jobs:
           fi
           echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
       - name: Checkout runner repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: runner
           fetch-depth: 0
