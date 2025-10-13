@@ -1,3 +1,6 @@
+> [!CAUTION]
+> This is an old version of the Project-W runner that won't receive any updates! Project-W has moved to a mono-repository, [go there](https://github.com/julianfp/project-w) for the current version of the runner.
+
 # Runner for Project W
 
 [![License: AGPLv3](https://img.shields.io/badge/License-agplv3-yellow.svg)](https://opensource.org/license/agpl-v3)
